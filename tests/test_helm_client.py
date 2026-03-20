@@ -9,6 +9,7 @@ import pytest
 from helm_dashboard.helm_client import (
     HelmRevision,
     ReleaseStatus,
+    get_contexts,
 )
 
 
@@ -43,3 +44,16 @@ def test_release_status_from_str_unknown():
     """ReleaseStatus.from_str should return UNKNOWN for unrecognized values."""
     status = ReleaseStatus.from_str("something-weird")
     assert status == ReleaseStatus.UNKNOWN
+
+
+def test_get_contexts_returns_list_on_error():
+    """get_contexts always returns a list, even when kubectl fails."""
+    async def run():
+        with patch(
+            "helm_dashboard.helm_client._run_kubectl",
+            new=AsyncMock(return_value=(1, b"", b"error")),
+        ):
+            result = await get_contexts()
+        assert isinstance(result, list)
+
+    asyncio.run(run())

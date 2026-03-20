@@ -65,6 +65,7 @@ from helm_dashboard.helm_client import (
 )
 from helm_dashboard.screens import (
     ConfirmDialog,
+    ContextScreen,
     DetailScreen,
     HelpScreen,
     InputDialog,
@@ -272,6 +273,7 @@ class HelmDashboard(App):
         Binding("D", "delete_release", "Delete", show=False),
         Binding("R", "show_repos", "Repos", show=True),
         Binding("U", "update_repos", "Update Repos", show=False),
+        Binding("c", "switch_context", "Context", show=True),
     ]
 
     # Reactive state
@@ -281,6 +283,7 @@ class HelmDashboard(App):
     selected_release: reactive[HelmRelease | None] = reactive(None)
     search_filter: reactive[str] = reactive("")
     status_message: reactive[str] = reactive("")
+    _pending_contexts: reactive[list[str] | None] = reactive(None)
 
     def __init__(self) -> None:
         super().__init__()
@@ -462,6 +465,47 @@ class HelmDashboard(App):
 
     def action_update_repos(self) -> None:
         self._do_update_repos()
+
+    def action_switch_context(self) -> None:
+        self._fetch_contexts()
+
+    @work(thread=False)
+    async def _fetch_contexts(self) -> None:
+        from helm_dashboard.helm_client import get_contexts
+        contexts = await get_contexts()
+        if not contexts:
+            self.notify("No contexts found", severity="warning")
+            return
+        self._pending_contexts = contexts  # triggers watch__pending_contexts
+
+    def watch__pending_contexts(self, contexts: list[str] | None) -> None:
+        """Called synchronously when _pending_contexts changes; open the screen here."""
+        if contexts is None:
+            return
+        self._pending_contexts = None  # reset immediately to avoid re-triggering
+        self.push_screen(
+            ContextScreen(contexts, self.current_context),
+            callback=self._handle_context_selected,
+        )
+
+    def _handle_context_selected(self, result: str | None) -> None:
+        if result and result != self.current_context:
+            self._apply_context_switch(result)
+
+    @work(thread=False)
+    async def _apply_context_switch(self, context_name: str) -> None:
+        from helm_dashboard.helm_client import get_namespaces, switch_context
+        self.status_message = f"Switching to {context_name}..."
+        success, msg = await switch_context(context_name)
+        if success:
+            self.current_context = context_name
+            self.selected_namespace = "All Namespaces"
+            self._namespaces = ["All Namespaces"] + await get_namespaces()
+            self.notify(f"⎈ Switched to {context_name}", timeout=3)
+            self.load_releases()
+        else:
+            self.notify(f"❌ Context switch failed: {msg}", severity="error", timeout=8)
+        self.status_message = ""
 
     @work(thread=False)
     async def _do_update_repos(self) -> None:

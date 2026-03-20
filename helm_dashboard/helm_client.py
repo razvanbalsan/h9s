@@ -197,6 +197,15 @@ async def get_contexts() -> list[str]:
         return []
 
 
+async def switch_context(context_name: str) -> tuple[bool, str]:
+    """Switch the active kubectl context."""
+    rc, stdout, stderr = await _run_kubectl(
+        "config", "use-context", context_name
+    )
+    output = (stdout + stderr).decode("utf-8", errors="replace").strip()
+    return rc == 0, output
+
+
 async def get_current_context() -> str:
     """Get current kubectl context."""
     try:
