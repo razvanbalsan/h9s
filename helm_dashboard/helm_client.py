@@ -442,6 +442,31 @@ async def search_charts(keyword: str) -> list[HelmChart]:
     ]
 
 
+async def get_available_chart_versions(chart_name: str) -> list[HelmChart]:
+    """Search repos for available versions of a chart (by base chart name).
+
+    Returns versions sorted by the repo's default order (typically newest first).
+    """
+    rc, stdout, stderr = await _run_helm(
+        "search", "repo", chart_name, "--output", "json", "--versions"
+    )
+    if rc != 0 or not stdout.strip():
+        return []
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return []
+    return [
+        HelmChart(
+            name=c.get("name", ""),
+            chart_version=c.get("version", ""),
+            app_version=c.get("app_version", ""),
+            description=c.get("description", ""),
+        )
+        for c in data
+    ]
+
+
 async def get_release_events(name: str, namespace: str) -> str:
     """Get Kubernetes events for resources in a release's namespace.
 

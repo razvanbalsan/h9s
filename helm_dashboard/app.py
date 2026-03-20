@@ -293,6 +293,7 @@ class HelmDashboard(App):
     def __init__(self) -> None:
         super().__init__()
         self._namespaces: list[str] = ["All Namespaces"]
+        self._upgrade_available: dict[str, bool] = {}  # release_name -> True if newer version available
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -317,7 +318,7 @@ class HelmDashboard(App):
         # Set up release table columns
         table = self.query_one("#release-table", DataTable)
         table.add_columns(
-            "Status", "Name", "Namespace", "Revision", "Chart", "Version", "App Ver", "Updated"
+            "Status", "Name", "Namespace", "Revision", "Chart", "Version", "App Ver", "Updated", "⬆"
         )
 
         # Check helm
@@ -567,6 +568,7 @@ class HelmDashboard(App):
         releases = await list_releases(ns)
         self.releases = releases
         self._populate_table()
+        self._check_upgrades_available()
         total = len(releases)
         deployed = sum(1 for r in releases if r.status == ReleaseStatus.DEPLOYED)
         failed = sum(1 for r in releases if r.status == ReleaseStatus.FAILED)
@@ -609,6 +611,7 @@ class HelmDashboard(App):
             # Truncate the updated timestamp
             updated_short = rel.updated[:19] if len(rel.updated) > 19 else rel.updated
 
+            upgrade_flag = "⬆" if self._upgrade_available.get(rel.name, False) else ""
             table.add_row(
                 status_text,
                 rel.name,
@@ -618,8 +621,36 @@ class HelmDashboard(App):
                 rel.chart_version,
                 rel.app_version,
                 updated_short,
+                Text(upgrade_flag, style="bold yellow"),
                 key=str(i),
             )
+
+    @work(thread=False)
+    async def _check_upgrades_available(self) -> None:
+        """Background check for newer chart versions (best-effort, does not block UI)."""
+        from helm_dashboard.helm_client import get_available_chart_versions
+        # Reset stale entries — a release may have been uninstalled/reinstalled.
+        self._upgrade_available = {}
+        if not self.releases:
+            return
+        # Deduplicate by chart name to minimize API calls
+        seen: set[str] = set()
+        for rel in self.releases:
+            chart_base = rel.chart
+            if chart_base in seen:
+                continue
+            seen.add(chart_base)
+            try:
+                versions = await get_available_chart_versions(chart_base)
+                if versions:
+                    latest = versions[0].chart_version
+                    for r in self.releases:
+                        if r.chart == chart_base and latest != r.chart_version:
+                            self._upgrade_available[r.name] = True
+            except Exception:
+                pass  # upgrade check is best-effort — never crash the app
+        # Re-populate table with upgrade flags
+        self._populate_table()
 
     def _apply_filter(self) -> None:
         """Re-populate table with current filter."""

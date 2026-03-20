@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from helm_dashboard.helm_client import (
+    HelmChart,
     HelmRevision,
     ReleaseStatus,
+    get_available_chart_versions,
     get_contexts,
     get_release_events,
 )
@@ -105,3 +107,19 @@ def test_diff_values_produces_unified_diff():
     result = diff_values(old, new, "rev-1", "rev-2")
     assert "-replicaCount: 1" in result
     assert "+replicaCount: 2" in result
+
+
+def test_get_available_chart_versions_returns_list():
+    """get_available_chart_versions returns a list of HelmChart objects."""
+    async def run():
+        mock_output = '[{"name":"stable/nginx","version":"2.0.0","app_version":"1.25","description":""}]'
+        with patch(
+            "helm_dashboard.helm_client._run_helm",
+            new=AsyncMock(return_value=(0, mock_output, "")),
+        ):
+            result = await get_available_chart_versions("nginx")
+        assert isinstance(result, list)
+        assert len(result) > 0
+        assert result[0].chart_version == "2.0.0"
+
+    asyncio.run(run())
