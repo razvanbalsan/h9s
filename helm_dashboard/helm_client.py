@@ -416,6 +416,26 @@ async def search_charts(keyword: str) -> list[HelmChart]:
     ]
 
 
+async def get_release_events(name: str, namespace: str) -> str:
+    """Get Kubernetes events for resources in a release's namespace.
+
+    Fetches all events in the namespace sorted by timestamp.
+    The release name is included for display context.
+    """
+    rc, stdout, stderr = await _run_kubectl(
+        "get", "events",
+        "--namespace", namespace,
+        "--sort-by=.lastTimestamp",
+        "-o", "wide",
+        timeout=15.0,
+    )
+    output = stdout.decode("utf-8", errors="replace")
+    if rc != 0 or not output.strip():
+        err = stderr.decode("utf-8", errors="replace")
+        return f"No events found in namespace '{namespace}'\n{err}"
+    return output
+
+
 async def get_release_resources(name: str, namespace: str) -> str:
     """Get Kubernetes resources for a release using kubectl."""
     try:

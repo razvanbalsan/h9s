@@ -14,6 +14,7 @@ from textual.widgets import DataTable, RichLog, Static, TabbedContent, TabPane
 from helm_dashboard.helm_client import (
     HelmRelease,
     ReleaseStatus,
+    get_release_events,
     get_release_history,
     get_release_hooks,
     get_release_manifest,
@@ -35,6 +36,7 @@ class DetailScreen(ModalScreen[None]):
         Binding("5", "tab_resources", "Resources", show=False),
         Binding("6", "tab_notes", "Notes", show=False),
         Binding("7", "tab_hooks", "Hooks", show=False),
+        Binding("8", "tab_events", "Events", show=False),
     ]
 
     CSS = """
@@ -94,7 +96,7 @@ class DetailScreen(ModalScreen[None]):
                     f"[dim]{rel.namespace}[/dim]",
                     id="detail-title",
                 )
-                yield Static("[dim]Esc: Back  |  1-7: Tabs[/dim]", id="detail-hint")
+                yield Static("[dim]Esc: Back  |  1-8: Tabs[/dim]", id="detail-hint")
             with TabbedContent(id="detail-tabs"):
                 with TabPane("Overview", id="tab-overview"):
                     yield RichLog(id="overview-log", wrap=True, markup=True)
@@ -112,6 +114,8 @@ class DetailScreen(ModalScreen[None]):
                     yield RichLog(id="notes-log", wrap=True, markup=True)
                 with TabPane("Hooks", id="tab-hooks"):
                     yield RichLog(id="hooks-log", wrap=True, markup=True)
+                with TabPane("Events", id="tab-events"):
+                    yield RichLog(id="events-log", wrap=True, markup=True)
 
     async def on_mount(self) -> None:
         # Set up history table columns
@@ -140,13 +144,14 @@ class DetailScreen(ModalScreen[None]):
         )
 
         # Load everything concurrently
-        history, values, manifest, resources, notes, hooks = await asyncio.gather(
+        history, values, manifest, resources, notes, hooks, events = await asyncio.gather(
             get_release_history(rel.name, rel.namespace),
             get_release_values(rel.name, rel.namespace, all_values=True),
             get_release_manifest(rel.name, rel.namespace),
             get_release_resources(rel.name, rel.namespace),
             get_release_notes(rel.name, rel.namespace),
             get_release_hooks(rel.name, rel.namespace),
+            get_release_events(rel.name, rel.namespace),
         )
 
         # History table
@@ -194,6 +199,12 @@ class DetailScreen(ModalScreen[None]):
         hooks_log.clear()
         hooks_log.write(Syntax(hooks, "yaml", theme="monokai", line_numbers=True))
 
+        # Events
+        events_log = self.query_one("#events-log", RichLog)
+        events_log.clear()
+        events_log.write(f"[bold cyan]Kubernetes Events — namespace: {rel.namespace}[/bold cyan]\n\n")
+        events_log.write(events)
+
     def action_close(self) -> None:
         self.dismiss(None)
 
@@ -217,3 +228,6 @@ class DetailScreen(ModalScreen[None]):
 
     def action_tab_hooks(self) -> None:
         self.query_one("#detail-tabs", TabbedContent).active = "tab-hooks"
+
+    def action_tab_events(self) -> None:
+        self.query_one("#detail-tabs", TabbedContent).active = "tab-events"
