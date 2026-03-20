@@ -72,3 +72,25 @@ def test_get_release_events_returns_string():
         assert len(result) > 0
 
     asyncio.run(run())
+
+
+def test_parse_manifest_resource_names():
+    """_parse_manifest_resource_names extracts kind/name pairs from multi-doc YAML."""
+    from helm_dashboard.helm_client import _parse_manifest_resource_names
+
+    manifest = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+  namespace: default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app-svc
+  namespace: default
+"""
+    result = _parse_manifest_resource_names(manifest)
+    assert ("Deployment", "my-app") in result
+    assert ("Service", "my-app-svc") in result

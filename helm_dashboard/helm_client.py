@@ -436,28 +436,69 @@ async def get_release_events(name: str, namespace: str) -> str:
     return output
 
 
-async def get_release_resources(name: str, namespace: str) -> str:
-    """Get Kubernetes resources for a release using kubectl."""
+def _parse_manifest_resource_names(manifest: str) -> list[tuple[str, str]]:
+    """Parse a multi-document YAML manifest and extract (kind, name) pairs."""
+    results: list[tuple[str, str]] = []
     try:
+        for doc in yaml.safe_load_all(manifest):
+            if not isinstance(doc, dict):
+                continue
+            kind = doc.get("kind", "")
+            name = doc.get("metadata", {}).get("name", "")
+            if kind and name:
+                results.append((kind, name))
+    except Exception:
+        pass
+    return results
+
+
+async def get_release_resources(name: str, namespace: str) -> str:
+    """Get Kubernetes resources for a release.
+
+    Tries three strategies in order:
+    1. Label selector: app.kubernetes.io/instance=<name>
+    2. Label selector: release=<name>
+    3. Parse manifest to get explicit resource names, then kubectl get each type.
+    """
+    from collections import defaultdict
+
+    # Strategy 1 & 2: label selectors
+    for label in (f"app.kubernetes.io/instance={name}", f"release={name}"):
         rc, stdout_bytes, _ = await _run_kubectl(
-            "get", "all",
-            "-l", f"app.kubernetes.io/instance={name}",
-            "--namespace", namespace,
-            "-o", "wide",
+            "get", "all", "-l", label,
+            "--namespace", namespace, "-o", "wide",
             timeout=15.0,
         )
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        if stdout.strip():
-            return stdout
-        # Try alternative label
-        rc2, stdout2_bytes, _ = await _run_kubectl(
-            "get", "all",
-            "-l", f"release={name}",
-            "--namespace", namespace,
-            "-o", "wide",
+        output = stdout_bytes.decode("utf-8", errors="replace")
+        if output.strip() and "No resources found" not in output:
+            return output
+
+    # Strategy 3: parse the manifest
+    # _run_helm returns tuple[int, str, str] — stdout is already a decoded str.
+    rc, manifest, _ = await _run_helm(
+        "get", "manifest", name, "--namespace", namespace
+    )
+    if rc != 0:
+        return f"No resources found for release '{name}'"
+
+    resource_pairs = _parse_manifest_resource_names(manifest)
+    if not resource_pairs:
+        return f"No resources found for release '{name}'"
+
+    # Group by kind for a single kubectl call per kind
+    by_kind: dict[str, list[str]] = defaultdict(list)
+    for kind, res_name in resource_pairs:
+        by_kind[kind].append(res_name)
+
+    sections: list[str] = []
+    for kind, names in by_kind.items():
+        rc, out_bytes, _ = await _run_kubectl(
+            "get", kind, *names,
+            "--namespace", namespace, "-o", "wide",
             timeout=15.0,
         )
-        stdout2 = stdout2_bytes.decode("utf-8", errors="replace")
-        return stdout2 if stdout2.strip() else f"No resources found for release '{name}'"
-    except Exception as e:
-        return f"Error fetching resources: {e}"
+        out = out_bytes.decode("utf-8", errors="replace")
+        if out.strip():
+            sections.append(out)
+
+    return "\n".join(sections) if sections else f"No resources found for release '{name}'"
