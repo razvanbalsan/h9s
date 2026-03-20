@@ -14,27 +14,32 @@ class HelpScreen(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         help_text = """\
-[bold cyan]⎈ Helm Dashboard — Keyboard Shortcuts[/bold cyan]
+[bold cyan]⎈ H9S — Keyboard Shortcuts[/bold cyan]
 
 [bold]Navigation[/bold]
   [yellow]↑/↓  k/j[/yellow]     Navigate release list
   [yellow]Enter[/yellow]        Select release / view details
   [yellow]Tab[/yellow]          Switch between panels
-  [yellow]1-6[/yellow]          Switch detail tabs
+  [yellow]1-8[/yellow]          Switch detail tabs
 
 [bold]Actions[/bold]
   [yellow]r[/yellow]            Refresh releases
   [yellow]/[/yellow]            Focus search filter
-  [yellow]n[/yellow]            Select namespace
+  [yellow]n[/yellow]            Select namespace(s)
+  [yellow]c[/yellow]            Switch Kubernetes context
+  [yellow]A[/yellow]            Cycle auto-refresh (off/30s/1m/5m)
   [yellow]B[/yellow]            Rollback selected release
   [yellow]D[/yellow]            Uninstall (delete) selected release
   [yellow]R[/yellow]            Repositories view
   [yellow]U[/yellow]            Update all repos
-  [yellow]c[/yellow]            Switch Kubernetes context
-  [yellow]A[/yellow]            Toggle auto-refresh (off/30s/1m/5m)
-  [yellow]l[/yellow]            (in Detail view) Open pod log viewer
 
-[bold]Views[/bold]
+[bold]Detail View[/bold]
+  [yellow]1-8[/yellow]          Overview / History / Values / Manifest / Resources / Notes / Hooks / Events
+  [yellow]l[/yellow]            Open pod log viewer
+  [yellow]v[/yellow]            Diff values against selected history revision
+  [yellow]Esc[/yellow]          Close / go back
+
+[bold]General[/bold]
   [yellow]?[/yellow]            Show this help
   [yellow]q / Ctrl+C[/yellow]   Quit
 

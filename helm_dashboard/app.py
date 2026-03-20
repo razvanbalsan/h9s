@@ -1,8 +1,8 @@
-"""Helm Dashboard — k9s-style terminal UI for Helm releases.
+"""H9S — k9s-style terminal UI for Helm releases.
 
 Usage:
-    helm-dashboard          # Launch the dashboard
-    python -m helm_dashboard.app
+    h9s                     # Launch the dashboard
+    python -m helm_dashboard
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ HelpScreen {
 class HelmDashboard(App):
     """A k9s-style terminal dashboard for Helm."""
 
-    TITLE = "⎈ Helm Dashboard"
+    TITLE = "⎈ H9S"
     SUB_TITLE = "Terminal UI for Helm Releases"
     CSS = DASHBOARD_CSS
 
@@ -299,7 +299,7 @@ class HelmDashboard(App):
         yield Header(show_clock=True)
 
         with Horizontal(id="top-bar"):
-            yield Static("⎈ HELM", id="logo")
+            yield Static("⎈ H9S", id="logo")
             yield Static("ctx: loading...", id="context-label")
             yield Input(placeholder="🔍 Filter releases...", id="search-input")
             yield Static("", id="status-bar")
@@ -681,7 +681,7 @@ class HelmDashboard(App):
 
 
 def main() -> None:
-    """Launch the Helm Dashboard TUI."""
+    """Launch the H9S TUI."""
     app = HelmDashboard()
     app.run()
 

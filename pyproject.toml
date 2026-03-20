@@ -1,7 +1,7 @@
 [project]
-name = "helm-dashboard"
+name = "h9s"
 version = "1.0.0"
-description = "A k9s-style terminal UI dashboard for Helm releases on Kubernetes"
+description = "H9S — a k9s-style terminal UI dashboard for Helm releases on Kubernetes"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Razvan" }]
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-helm-dashboard = "helm_dashboard.app:main"
+h9s = "helm_dashboard.app:main"
 
 [project.optional-dependencies]
 dev = ["ruff", "mypy", "pytest"]

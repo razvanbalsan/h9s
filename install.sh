@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ─── Helm Dashboard Installer ───────────────────────────────────────
-# Installs the helm-dashboard TUI tool on macOS / Linux.
+# ─── H9S Installer ───────────────────────────────────────────────────
+# Installs the h9s TUI tool on macOS / Linux.
 #
 # Usage:
 #   chmod +x install.sh && ./install.sh
@@ -79,11 +79,11 @@ ok "Dependencies installed"
 
 # ── Create launcher script ───────────────────────────────────────────
 
-LAUNCHER="${SCRIPT_DIR}/helm-dashboard"
+LAUNCHER="${SCRIPT_DIR}/h9s"
 
 cat > "$LAUNCHER" << 'SCRIPT'
 #!/usr/bin/env bash
-# Launcher for Helm Dashboard
+# Launcher for H9S
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/.venv/bin/activate"
 python -m helm_dashboard "$@"
@@ -98,13 +98,13 @@ echo ""
 info "Installation complete!"
 echo ""
 printf "  ${GREEN}To run:${NC}\n"
-printf "    cd %s && ./helm-dashboard\n" "$SCRIPT_DIR"
+printf "    cd %s && ./h9s\n" "$SCRIPT_DIR"
 echo ""
 printf "  ${GREEN}Or add to PATH:${NC}\n"
-printf "    ln -sf %s/helm-dashboard /usr/local/bin/helm-dashboard\n" "$SCRIPT_DIR"
+printf "    ln -sf %s/h9s /usr/local/bin/h9s\n" "$SCRIPT_DIR"
 echo ""
 printf "  ${GREEN}Then just run:${NC}\n"
-printf "    helm-dashboard\n"
+printf "    h9s\n"
 echo ""
 printf "  ${CYAN}Keyboard shortcuts:${NC} Press ${YELLOW}?${NC} inside the app for help.\n"
 echo ""

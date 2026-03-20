@@ -1,4 +1,4 @@
-# ⎈ Helm Dashboard — Terminal UI
+# ⎈ H9S — Terminal UI for Helm
 
 A **k9s-style** terminal dashboard for managing Helm releases on Kubernetes, built with Python and [Textual](https://textual.textualize.io/).
 
@@ -38,26 +38,26 @@ A **k9s-style** terminal dashboard for managing Helm releases on Kubernetes, bui
 ### Option 1 — One-command installer (recommended)
 
 ```bash
-git clone <repo-url> helm-dashboard
-cd helm-dashboard
+git clone <repo-url> h9s
+cd h9s
 chmod +x install.sh && ./install.sh
 ```
 
-The installer creates a virtual environment, installs all dependencies, and places a `helm-dashboard` launcher script in the project root.
+The installer creates a virtual environment, installs all dependencies, and places a `h9s` launcher script in the project root.
 
 ```bash
-./helm-dashboard
+./h9s
 ```
 
 ### Option 2 — pip install (editable)
 
 ```bash
-git clone <repo-url> helm-dashboard
-cd helm-dashboard
+git clone <repo-url> h9s
+cd h9s
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e .
-helm-dashboard                   # registered entry point
+h9s                   # registered entry point
 # or: python -m helm_dashboard
 ```
 
@@ -65,7 +65,7 @@ helm-dashboard                   # registered entry point
 
 ```bash
 pip install .
-helm-dashboard
+h9s
 ```
 
 ### Dependencies
@@ -83,7 +83,7 @@ No Kubernetes SDK is required — the app communicates with Helm and kubectl ent
 ## Usage
 
 ```bash
-helm-dashboard          # uses current kubeconfig context
+h9s          # uses current kubeconfig context
 ```
 
 On startup the dashboard loads all releases in the current context. Use `n` to open the namespace selector and `c` to switch context.
@@ -135,7 +135,7 @@ On startup the dashboard loads all releases in the current context. Use `n` to o
 ## Architecture
 
 ```
-helm-dashboard/
+h9s/
 ├── pyproject.toml              # Project metadata & dependencies
 ├── install.sh                  # One-command installer
 ├── README.md
