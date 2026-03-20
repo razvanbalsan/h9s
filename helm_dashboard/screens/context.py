@@ -9,6 +9,18 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 
 
+class _BoundedOptionList(OptionList):
+    """OptionList that stops at first/last item instead of wrapping."""
+
+    def action_cursor_up(self) -> None:
+        if self.highlighted is not None and self.highlighted > 0:
+            super().action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        if self.highlighted is not None and self.highlighted < self.option_count - 1:
+            super().action_cursor_down()
+
+
 class ContextScreen(ModalScreen[str | None]):
     """Kubernetes context selector."""
 
@@ -47,10 +59,10 @@ class ContextScreen(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="ctx-box"):
             yield Static("⎈  Switch Context", id="ctx-title")
-            yield OptionList(id="ctx-list")
+            yield _BoundedOptionList(id="ctx-list")
 
     def on_mount(self) -> None:
-        ol = self.query_one("#ctx-list", OptionList)
+        ol = self.query_one("#ctx-list", _BoundedOptionList)
         highlight_idx = 0
         for i, ctx in enumerate(self._contexts):
             ol.add_option(ctx)

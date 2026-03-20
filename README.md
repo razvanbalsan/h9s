@@ -8,80 +8,157 @@ A **k9s-style** terminal dashboard for managing Helm releases on Kubernetes, bui
 ## Features
 
 - **Release Overview** — list all Helm releases across namespaces with live status indicators
-- **Namespace Filtering** — cycle through namespaces with a single keypress
+- **Multi-Namespace Filtering** — select one, many, or all namespaces at once
 - **Fuzzy Search** — filter releases by name, namespace, chart, or app version
-- **Release Details** — tabbed panels for overview, history, values, manifests, resources, and notes
-- **Revision History** — view all revisions with status and descriptions
-- **Values Inspector** — YAML syntax-highlighted view of user-supplied and computed values
+- **Context Switching** — switch between Kubernetes contexts without leaving the dashboard
+- **Auto-Refresh** — cycle through 30s / 1m / 5m refresh intervals
+- **Release Details** — tabbed panels: Overview, History, Values, Manifest, Resources, Notes, Hooks, Events
+- **Revision History** — view all revisions with status, chart version, and descriptions
+- **Values Inspector** — YAML syntax-highlighted view with diff between any two revisions
 - **Manifest Viewer** — full rendered Kubernetes manifest with syntax highlighting
 - **K8s Resources** — live view of pods, services, and deployments belonging to a release
+- **Pod Log Viewer** — stream and browse logs for any pod in a release
+- **kubectl Describe** — describe any Kubernetes resource without leaving the TUI
+- **Upgrade Indicator** — ⬆ flag on releases that have a newer chart version available in your repos
 - **One-Key Rollback** — rollback to the previous revision with confirmation
 - **Uninstall** — remove releases with safety confirmation
-- **Repository Management** — add, remove, update Helm repos from a dedicated screen
+- **Repository Management** — add, remove, and update Helm repos from a dedicated screen
 - **Keyboard-Driven** — full keyboard navigation inspired by k9s and htop
 
 ## Prerequisites
 
-| Tool | Required | Install |
-|------|----------|---------|
+| Tool | Required | Notes |
+|------|----------|-------|
 | Python 3.11+ | ✅ | `brew install python@3.12` |
 | Helm 3 | ✅ | `brew install helm` |
-| kubectl | Recommended | `brew install kubectl` |
+| kubectl | Recommended | Needed for Resources, Logs, Events, and Describe tabs |
 
-## Quick Start
+## Installation
+
+### Option 1 — One-command installer (recommended)
 
 ```bash
-# Clone or download the project
+git clone <repo-url> helm-dashboard
 cd helm-dashboard
-
-# Run the installer (creates venv, installs deps, creates launcher)
 chmod +x install.sh && ./install.sh
+```
 
-# Launch
+The installer creates a virtual environment, installs all dependencies, and places a `helm-dashboard` launcher script in the project root.
+
+```bash
 ./helm-dashboard
 ```
 
-### Manual Installation
+### Option 2 — pip install (editable)
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+git clone <repo-url> helm-dashboard
+cd helm-dashboard
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e .
-python -m helm_dashboard
+helm-dashboard                   # registered entry point
+# or: python -m helm_dashboard
 ```
 
+### Option 3 — pip install (non-editable)
+
+```bash
+pip install .
+helm-dashboard
+```
+
+### Dependencies
+
+All Python dependencies are declared in `pyproject.toml` and installed automatically:
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `textual` | ≥ 0.85 | TUI framework |
+| `rich` | ≥ 13.0 | Syntax highlighting, rich text |
+| `pyyaml` | ≥ 6.0 | YAML parsing for manifest/values diff |
+
+No Kubernetes SDK is required — the app communicates with Helm and kubectl entirely through their CLI binaries.
+
+## Usage
+
+```bash
+helm-dashboard          # uses current kubeconfig context
+```
+
+On startup the dashboard loads all releases in the current context. Use `n` to open the namespace selector and `c` to switch context.
+
 ## Keyboard Shortcuts
+
+### Global
 
 | Key | Action |
 |-----|--------|
 | `↑/↓` or `k/j` | Navigate release list |
-| `Enter` | Select release |
-| `Tab` | Switch panels |
-| `1`–`6` | Switch detail tab (Overview/History/Values/Manifest/Resources/Notes) |
+| `Enter` | Open release detail |
 | `/` | Focus search filter |
-| `n` | Cycle namespace |
+| `n` | Open namespace selector (multi-select) |
+| `c` | Switch Kubernetes context |
 | `r` | Refresh releases |
+| `A` | Cycle auto-refresh interval (off → 30s → 1m → 5m) |
 | `B` | Rollback selected release |
 | `D` | Uninstall selected release |
-| `R` | Open repo management |
-| `U` | Update all repos |
+| `R` | Open repo management screen |
+| `U` | Update all Helm repos |
 | `?` | Show help |
 | `q` | Quit |
+
+### Release Detail (tabs 1–8)
+
+| Key | Action |
+|-----|--------|
+| `1` | Overview tab |
+| `2` | History tab |
+| `3` | Values tab |
+| `4` | Manifest tab |
+| `5` | Resources tab |
+| `6` | Notes tab |
+| `7` | Hooks tab |
+| `8` | Events tab |
+| `l` | Open pod log viewer |
+| `v` | Diff values between selected history revision and current |
+| `Esc` | Close / go back |
+
+### Namespace Selector
+
+| Key | Action |
+|-----|--------|
+| `Space` | Toggle namespace selection |
+| `Enter` | Confirm selection |
+| `Esc` | Cancel |
 
 ## Architecture
 
 ```
 helm-dashboard/
-├── pyproject.toml          # Project metadata & dependencies
-├── install.sh              # One-command installer
+├── pyproject.toml              # Project metadata & dependencies
+├── install.sh                  # One-command installer
 ├── README.md
+├── tests/
+│   └── test_helm_client.py
 └── helm_dashboard/
     ├── __init__.py
-    ├── __main__.py         # python -m entry point
-    ├── app.py              # Main TUI application (Textual)
-    └── helm_client.py      # Async Helm/kubectl CLI wrapper
+    ├── __main__.py             # python -m entry point
+    ├── app.py                  # Main TUI application (Textual)
+    ├── helm_client.py          # Async Helm/kubectl CLI wrapper
+    └── screens/
+        ├── __init__.py
+        ├── context.py          # Context switcher modal
+        ├── describe.py         # kubectl describe viewer
+        ├── detail.py           # Release detail (8 tabs)
+        ├── dialogs.py          # Confirm / Input dialogs
+        ├── help.py             # Help overlay
+        ├── logs.py             # Pod log viewer
+        ├── namespace.py        # Multi-namespace selector
+        └── repos.py            # Helm repo management
 ```
 
-The app communicates with Helm entirely through the `helm` CLI (JSON output mode), keeping it lightweight and dependency-free beyond Python + Textual. All subprocess calls are async, so the UI never blocks.
+The app communicates with Helm and kubectl entirely through their CLI binaries (JSON/YAML output mode), keeping it lightweight and dependency-free beyond Python + Textual. All subprocess calls are async, so the UI never blocks.
 
 ## License
 

@@ -282,7 +282,7 @@ class HelmDashboard(App):
 
     # Reactive state
     current_context: reactive[str] = reactive("loading...")
-    selected_namespace: reactive[str] = reactive("All Namespaces")
+    selected_namespaces: reactive[frozenset[str]] = reactive(frozenset)  # empty = All Namespaces
     releases: reactive[list[HelmRelease]] = reactive(list, init=False)
     selected_release: reactive[HelmRelease | None] = reactive(None)
     search_filter: reactive[str] = reactive("")
@@ -292,7 +292,7 @@ class HelmDashboard(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self._namespaces: list[str] = ["All Namespaces"]
+        self._namespaces: list[str] = []  # real namespaces only (no "All Namespaces" pseudo-entry)
         self._upgrade_available: dict[str, bool] = {}  # release_name -> True if newer version available
 
     def compose(self) -> ComposeResult:
@@ -334,7 +334,7 @@ class HelmDashboard(App):
 
         # Load context and data
         self.current_context = await get_current_context()
-        self._namespaces = ["All Namespaces"] + await get_namespaces()
+        self._namespaces = await get_namespaces()
 
         self.load_releases()
         self.query_one("#release-table", DataTable).focus()
@@ -426,14 +426,14 @@ class HelmDashboard(App):
 
     def action_cycle_namespace(self) -> None:
         self.push_screen(
-            NamespaceScreen(self._namespaces, self.selected_namespace),
+            NamespaceScreen(self._namespaces, self.selected_namespaces),
             callback=self._handle_namespace_selected,
         )
 
-    def _handle_namespace_selected(self, result: str | None) -> None:
-        if result is not None and result != self.selected_namespace:
-            self.selected_namespace = result
-            self.notify(f"Namespace: {self.selected_namespace}", timeout=2)
+    def _handle_namespace_selected(self, result: frozenset[str] | None) -> None:
+        if result is not None and result != self.selected_namespaces:
+            self.selected_namespaces = result
+            self.notify(f"Namespace: {self._ns_display_label()}", timeout=2)
             self.load_releases()
 
     def action_rollback(self) -> None:
@@ -539,8 +539,8 @@ class HelmDashboard(App):
         success, msg = await switch_context(context_name)
         if success:
             self.current_context = context_name
-            self.selected_namespace = "All Namespaces"
-            self._namespaces = ["All Namespaces"] + await get_namespaces()
+            self.selected_namespaces = frozenset()
+            self._namespaces = await get_namespaces()
             self.notify(f"⎈ Switched to {context_name}", timeout=3)
             self.load_releases()
         else:
@@ -558,14 +558,34 @@ class HelmDashboard(App):
             self.notify(f"❌ Update failed: {msg}", severity="error", timeout=8)
         self.status_message = ""
 
+    def _ns_display_label(self) -> str:
+        """Human-readable label for the current namespace selection."""
+        ns = self.selected_namespaces
+        if not ns:
+            return "All Namespaces"
+        if len(ns) == 1:
+            return next(iter(ns))
+        sorted_ns = sorted(ns)
+        if len(sorted_ns) <= 2:
+            return ", ".join(sorted_ns)
+        return f"{sorted_ns[0]}, {sorted_ns[1]} (+{len(sorted_ns) - 2})"
+
     # ── Data Loading ──────────────────────────────────────────────────────────
 
     @work(thread=False)
     async def load_releases(self) -> None:
         """Load releases from Helm."""
         self.status_message = "Loading releases..."
-        ns = self.selected_namespace if self.selected_namespace != "All Namespaces" else None
-        releases = await list_releases(ns)
+        ns_set = self.selected_namespaces
+        if not ns_set:
+            # All namespaces
+            releases = await list_releases(None)
+        elif len(ns_set) == 1:
+            releases = await list_releases(next(iter(ns_set)))
+        else:
+            # Fetch all then filter in Python
+            all_releases = await list_releases(None)
+            releases = [r for r in all_releases if r.namespace in ns_set]
         self.releases = releases
         self._populate_table()
         self._check_upgrades_available()
@@ -573,7 +593,7 @@ class HelmDashboard(App):
         deployed = sum(1 for r in releases if r.status == ReleaseStatus.DEPLOYED)
         failed = sum(1 for r in releases if r.status == ReleaseStatus.FAILED)
         self.status_message = (
-            f"[{self.selected_namespace}] "
+            f"[{self._ns_display_label()}] "
             f"{total} releases | "
             f"[green]{deployed} deployed[/green]"
             + (f" | [red]{failed} failed[/red]" if failed else "")
