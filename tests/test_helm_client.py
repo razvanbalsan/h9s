@@ -10,6 +10,7 @@ from helm_dashboard.helm_client import (
     HelmRevision,
     ReleaseStatus,
     get_contexts,
+    get_release_events,
 )
 
 
@@ -55,5 +56,19 @@ def test_get_contexts_returns_list_on_error():
         ):
             result = await get_contexts()
         assert isinstance(result, list)
+
+    asyncio.run(run())
+
+
+def test_get_release_events_returns_string():
+    """get_release_events always returns a string."""
+    async def run():
+        with patch(
+            "helm_dashboard.helm_client._run_kubectl",
+            new=AsyncMock(return_value=(0, b"Events:\n  Normal  Pulled  1m  kubelet  image pulled", b"")),
+        ):
+            result = await get_release_events("my-release", "default")
+        assert isinstance(result, str)
+        assert len(result) > 0
 
     asyncio.run(run())

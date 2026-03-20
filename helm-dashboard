@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Launcher for Helm Dashboard
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/.venv/bin/activate"
+python -m helm_dashboard "$@"

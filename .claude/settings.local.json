@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:textual.textualize.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"refactor: extract ConfirmDialog, InputDialog, HelpScreen into screens package:*)",
+      "Bash(the app is not in a repo)",
+      "Bash(I don't use git for this project)",
+      "Bash(donțt use git)",
+      "Bash(git commit -m \"refactor: extract DetailScreen into screens package; add Hooks tab; remove dead _ns_index; add all project files:*)",
+      "Bash(pip install:*)",
+      "Bash(pytest tests/test_helm_client.py -v)",
+      "Bash(git commit:*)",
+      "Bash(pytest tests/ -v)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "awslabs-cdk-mcp-server"
+  ]
+}
