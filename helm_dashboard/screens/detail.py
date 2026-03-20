@@ -242,7 +242,7 @@ class DetailScreen(ModalScreen[None]):
 
     def action_diff_values(self) -> None:
         hist_table = self.query_one("#history-table", DataTable)
-        if hist_table.cursor_row is None:
+        if hist_table.cursor_row is None or hist_table.row_count == 0:
             self.notify("Select a revision in the History tab first", severity="warning")
             return
         row = hist_table.get_row_at(hist_table.cursor_row)
