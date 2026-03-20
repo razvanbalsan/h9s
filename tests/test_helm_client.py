@@ -94,3 +94,14 @@ metadata:
     result = _parse_manifest_resource_names(manifest)
     assert ("Deployment", "my-app") in result
     assert ("Service", "my-app-svc") in result
+
+
+def test_diff_values_produces_unified_diff():
+    """diff_values returns a unified diff string."""
+    from helm_dashboard.helm_client import diff_values
+
+    old = "replicaCount: 1\nimage:\n  tag: v1.0\n"
+    new = "replicaCount: 2\nimage:\n  tag: v1.1\n"
+    result = diff_values(old, new, "rev-1", "rev-2")
+    assert "-replicaCount: 1" in result
+    assert "+replicaCount: 2" in result

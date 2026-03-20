@@ -14,6 +14,7 @@ from textual.widgets import DataTable, RichLog, Static, TabbedContent, TabPane
 from helm_dashboard.helm_client import (
     HelmRelease,
     ReleaseStatus,
+    diff_values,
     get_release_events,
     get_release_history,
     get_release_hooks,
@@ -21,6 +22,7 @@ from helm_dashboard.helm_client import (
     get_release_notes,
     get_release_resources,
     get_release_values,
+    get_values_for_revision,
 )
 
 
@@ -38,6 +40,7 @@ class DetailScreen(ModalScreen[None]):
         Binding("6", "tab_notes", "Notes", show=False),
         Binding("7", "tab_hooks", "Hooks", show=False),
         Binding("8", "tab_events", "Events", show=False),
+        Binding("v", "diff_values", "Diff Values", show=False),
     ]
 
     CSS = """
@@ -236,3 +239,34 @@ class DetailScreen(ModalScreen[None]):
 
     def action_tab_events(self) -> None:
         self.query_one("#detail-tabs", TabbedContent).active = "tab-events"
+
+    def action_diff_values(self) -> None:
+        hist_table = self.query_one("#history-table", DataTable)
+        if hist_table.cursor_row is None:
+            self.notify("Select a revision in the History tab first", severity="warning")
+            return
+        row = hist_table.get_row_at(hist_table.cursor_row)
+        if row:
+            selected_rev = int(str(row[0]))
+            self._show_values_diff(selected_rev)
+
+    @work(thread=False)
+    async def _show_values_diff(self, old_revision: int) -> None:
+        rel = self._release
+        old_values, new_values = await asyncio.gather(
+            get_values_for_revision(rel.name, rel.namespace, old_revision),
+            get_release_values(rel.name, rel.namespace, all_values=True),
+        )
+        diff = diff_values(
+            old_values, new_values,
+            old_label=f"revision {old_revision}",
+            new_label=f"revision {rel.revision} (current)",
+        )
+        values_log = self.query_one("#values-log", RichLog)
+        values_log.clear()
+        values_log.write(
+            f"[bold cyan]Values diff: rev {old_revision} → rev {rel.revision}[/bold cyan]\n\n"
+        )
+        values_log.write(Syntax(diff, "diff", theme="monokai"))
+        self.query_one("#detail-tabs", TabbedContent).active = "tab-values"
+        self.notify(f"Diff: revision {old_revision} vs current", timeout=3)

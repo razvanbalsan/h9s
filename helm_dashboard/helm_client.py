@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -307,6 +308,31 @@ async def get_release_values(name: str, namespace: str, all_values: bool = False
     if rc != 0:
         return f"# Error fetching values:\n# {stderr}"
     return stdout
+
+
+async def get_values_for_revision(name: str, namespace: str, revision: int) -> str:
+    """Get computed values for a specific historical revision."""
+    rc, stdout, stderr = await _run_helm(
+        "get", "values", name,
+        "--namespace", namespace,
+        "--revision", str(revision),
+        "--all",
+        "--output", "yaml",
+    )
+    if rc != 0:
+        return f"# Error fetching values for revision {revision}:\n# {stderr}"
+    return stdout
+
+
+def diff_values(old: str, new: str, old_label: str = "old", new_label: str = "new") -> str:
+    """Return a unified diff of two YAML values strings."""
+    diff = list(difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+        fromfile=old_label,
+        tofile=new_label,
+    ))
+    return "".join(diff) if diff else "(no differences)"
 
 
 async def get_release_manifest(name: str, namespace: str) -> str:
