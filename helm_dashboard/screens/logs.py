@@ -17,6 +17,7 @@ class LogScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "close", "Back"),
         Binding("r", "refresh_logs", "Refresh"),
+        Binding("d", "describe_pod", "Describe", show=False),
     ]
 
     CSS = """
@@ -114,3 +115,12 @@ class LogScreen(ModalScreen[None]):
 
     def action_refresh_logs(self) -> None:
         self._load_logs()
+
+    def action_describe_pod(self) -> None:
+        if not self._selected_pod:
+            self.app.notify("No pod selected", severity="warning")
+            return
+        from helm_dashboard.screens.describe import DescribeScreen
+        self.app.push_screen(
+            DescribeScreen("pod", self._selected_pod, self._namespace)
+        )

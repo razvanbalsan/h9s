@@ -488,6 +488,19 @@ async def stream_pod_logs(
     return output or "(no log output)"
 
 
+async def describe_resource(kind: str, name: str, namespace: str) -> str:
+    """Run kubectl describe on a specific resource."""
+    rc, stdout, stderr = await _run_kubectl(
+        "describe", kind, name,
+        "--namespace", namespace,
+        timeout=15.0,
+    )
+    output = stdout.decode("utf-8", errors="replace")
+    if rc != 0:
+        return f"Error: {stderr.decode('utf-8', errors='replace')}"
+    return output or f"No describe output for {kind}/{name}"
+
+
 def _parse_manifest_resource_names(manifest: str) -> list[tuple[str, str]]:
     """Parse a multi-document YAML manifest and extract (kind, name) pairs."""
     results: list[tuple[str, str]] = []
