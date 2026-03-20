@@ -29,6 +29,7 @@ class DetailScreen(ModalScreen[None]):
 
     BINDINGS = [
         Binding("escape", "close", "Back"),
+        Binding("l", "open_logs", "Logs", show=False),
         Binding("1", "tab_overview", "Overview", show=False),
         Binding("2", "tab_history", "History", show=False),
         Binding("3", "tab_values", "Values", show=False),
@@ -207,6 +208,10 @@ class DetailScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+    def action_open_logs(self) -> None:
+        from helm_dashboard.screens.logs import LogScreen
+        self.app.push_screen(LogScreen(self._release.name, self._release.namespace))
 
     def action_tab_overview(self) -> None:
         self.query_one("#detail-tabs", TabbedContent).active = "tab-overview"

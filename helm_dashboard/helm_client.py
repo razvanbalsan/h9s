@@ -436,6 +436,58 @@ async def get_release_events(name: str, namespace: str) -> str:
     return output
 
 
+async def list_pods_for_release(name: str, namespace: str) -> list[dict[str, str]]:
+    """List pods belonging to a release via label selectors.
+
+    Returns list of dicts with keys: name, status, containers.
+    """
+    pods: list[dict[str, str]] = []
+
+    for label in (f"app.kubernetes.io/instance={name}", f"release={name}"):
+        rc, stdout, _ = await _run_kubectl(
+            "get", "pods",
+            "-l", label,
+            "--namespace", namespace,
+            "-o", "jsonpath={range .items[*]}{.metadata.name}|{.status.phase}|{range .status.containerStatuses[*]}{.name},{end}\\n{end}",
+            timeout=15.0,
+        )
+        text = stdout.decode("utf-8", errors="replace")
+        if rc == 0 and text.strip():
+            for line in text.strip().splitlines():
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    pods.append({
+                        "name": parts[0],
+                        "status": parts[1],
+                        "containers": parts[2].rstrip(",") if len(parts) > 2 else "",
+                    })
+            if pods:
+                return pods
+
+    return pods
+
+
+async def stream_pod_logs(
+    pod_name: str,
+    namespace: str,
+    container: str = "",
+    tail_lines: int = 200,
+) -> str:
+    """Fetch recent pod logs (non-streaming snapshot, last N lines)."""
+    args: list[str] = [
+        "logs", pod_name,
+        "--namespace", namespace,
+        f"--tail={tail_lines}",
+    ]
+    if container:
+        args.extend(["-c", container])
+    rc, stdout, stderr = await _run_kubectl(*args, timeout=30.0)
+    output = stdout.decode("utf-8", errors="replace")
+    if rc != 0:
+        return f"Error fetching logs: {stderr.decode('utf-8', errors='replace')}"
+    return output or "(no log output)"
+
+
 def _parse_manifest_resource_names(manifest: str) -> list[tuple[str, str]]:
     """Parse a multi-document YAML manifest and extract (kind, name) pairs."""
     results: list[tuple[str, str]] = []
