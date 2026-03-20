@@ -17,7 +17,11 @@
       "Bash(pip install:*)",
       "Bash(pytest tests/test_helm_client.py -v)",
       "Bash(git commit:*)",
-      "Bash(pytest tests/ -v)"
+      "Bash(pytest tests/ -v)",
+      "Bash(pytest tests/test_helm_client.py::test_parse_manifest_resource_names -v)",
+      "Bash(pytest tests/test_helm_client.py::test_diff_values_produces_unified_diff -v)",
+      "Bash(pytest tests/test_helm_client.py::test_get_available_chart_versions_returns_list -v)",
+      "Bash(pytest tests/ -q)"
     ]
   },
   "enableAllProjectMcpServers": true,
