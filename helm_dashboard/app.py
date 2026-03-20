@@ -263,6 +263,9 @@ class HelmDashboard(App):
     SUB_TITLE = "Terminal UI for Helm Releases"
     CSS = DASHBOARD_CSS
 
+    _REFRESH_INTERVALS: list[int] = [0, 30, 60, 300]   # seconds; 0 = off
+    _REFRESH_LABELS: list[str] = ["off", "30s", "1m", "5m"]
+
     BINDINGS = [
         Binding("q", "quit", "Quit", show=True),
         Binding("question_mark", "show_help", "Help", show=True, key_display="?"),
@@ -274,6 +277,7 @@ class HelmDashboard(App):
         Binding("R", "show_repos", "Repos", show=True),
         Binding("U", "update_repos", "Update Repos", show=False),
         Binding("c", "switch_context", "Context", show=True),
+        Binding("A", "toggle_auto_refresh", "Auto-refresh", show=False),
     ]
 
     # Reactive state
@@ -283,6 +287,7 @@ class HelmDashboard(App):
     selected_release: reactive[HelmRelease | None] = reactive(None)
     search_filter: reactive[str] = reactive("")
     status_message: reactive[str] = reactive("")
+    auto_refresh_interval: reactive[int] = reactive(0)
     _pending_contexts: reactive[list[str] | None] = reactive(None)
 
     def __init__(self) -> None:
@@ -343,9 +348,19 @@ class HelmDashboard(App):
     def watch_status_message(self, value: str) -> None:
         try:
             bar = self.query_one("#status-bar", Static)
-            bar.update(value)
+            interval = self.auto_refresh_interval
+            if interval > 0 and interval in self._REFRESH_INTERVALS:
+                idx = self._REFRESH_INTERVALS.index(interval)
+                ar_label = f"  [dim]⟳ {self._REFRESH_LABELS[idx]}[/dim]"
+            else:
+                ar_label = ""
+            bar.update(value + ar_label)
         except NoMatches:
             pass
+
+    def watch_auto_refresh_interval(self, value: int) -> None:
+        """Immediately re-render the status bar to show the new interval label."""
+        self.watch_status_message(self.status_message)
 
     @on(Input.Changed, "#search-input")
     def on_search_changed(self, event: Input.Changed) -> None:
@@ -374,6 +389,30 @@ class HelmDashboard(App):
                 self.selected_release = filtered[idx]
 
     # ── Actions ───────────────────────────────────────────────────────────────
+
+    def action_toggle_auto_refresh(self) -> None:
+        intervals = self._REFRESH_INTERVALS
+        current_idx = (
+            intervals.index(self.auto_refresh_interval)
+            if self.auto_refresh_interval in intervals
+            else 0
+        )
+        next_idx = (current_idx + 1) % len(intervals)
+        self.auto_refresh_interval = intervals[next_idx]
+        label = self._REFRESH_LABELS[next_idx]
+        if self.auto_refresh_interval > 0:
+            self.notify(f"Auto-refresh: every {label}", timeout=2)
+            self._start_auto_refresh()
+        else:
+            self.notify("Auto-refresh: off", timeout=2)
+
+    @work(thread=False, exclusive=True)
+    async def _start_auto_refresh(self) -> None:
+        """Runs until auto_refresh_interval becomes 0."""
+        while self.auto_refresh_interval > 0:
+            await asyncio.sleep(self.auto_refresh_interval)
+            if self.auto_refresh_interval > 0:  # check again after sleep
+                self.load_releases()
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
