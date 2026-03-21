@@ -15,6 +15,23 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# Characters that kubectl/helm would interpret as flag prefixes if passed as values.
+_FLAG_PREFIX = "--"
+
+
+def _validate_resource_arg(value: str, label: str = "argument") -> None:
+    """Raise ValueError if value looks like a CLI flag or contains unsafe bytes.
+
+    Protects against argument injection where a user-controlled string like
+    '--namespace=kube-system' could override positional CLI arguments.
+    """
+    if not value:
+        return
+    if value.startswith(_FLAG_PREFIX):
+        raise ValueError(f"Invalid {label} {value!r}: must not start with '--'")
+    if "\x00" in value:
+        raise ValueError(f"Invalid {label}: contains null byte")
+
 
 def _install_asyncio_error_filter() -> None:
     """Suppress Python 3.14 asyncio subprocess InvalidStateError.
@@ -542,6 +559,8 @@ async def update_repos() -> tuple[bool, str]:
 
 async def add_repo(name: str, url: str) -> tuple[bool, str]:
     """Add a Helm repository."""
+    _validate_resource_arg(name, "repo name")
+    _validate_resource_arg(url, "repo url")
     rc, stdout, stderr = await _run_helm("repo", "add", name, url)
     output = stdout + stderr
     return rc == 0, output.strip()
@@ -549,6 +568,7 @@ async def add_repo(name: str, url: str) -> tuple[bool, str]:
 
 async def remove_repo(name: str) -> tuple[bool, str]:
     """Remove a Helm repository."""
+    _validate_resource_arg(name, "repo name")
     rc, stdout, stderr = await _run_helm("repo", "remove", name)
     output = stdout + stderr
     return rc == 0, output.strip()
@@ -556,6 +576,7 @@ async def remove_repo(name: str) -> tuple[bool, str]:
 
 async def search_charts(keyword: str) -> list[HelmChart]:
     """Search for charts in configured repos."""
+    _validate_resource_arg(keyword, "search keyword")
     rc, stdout, stderr = await _run_helm(
         "search", "repo", keyword, "--output", "json"
     )
@@ -679,6 +700,8 @@ async def stream_pod_logs(
     tail_lines: int = 200,
 ) -> str:
     """Fetch recent pod logs (non-streaming snapshot, last N lines)."""
+    if container:
+        _validate_resource_arg(container, "container name")
     args: list[str] = [
         "logs", pod_name,
         "--namespace", namespace,
