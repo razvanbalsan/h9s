@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 
-from rich.markup import escape
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -20,7 +19,6 @@ from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
     Footer,
-    Header,
     Input,
     Static,
 )
@@ -30,13 +28,17 @@ from helm_dashboard.helm_client import (
     ReleaseStatus,
     _install_asyncio_error_filter,
     check_helm_available,
+    get_cluster_info,
     get_current_context,
+    get_k8s_server_version,
     get_namespaces,
+    get_node_resources,
     list_releases,
     rollback_release,
     uninstall_release,
     update_repos,
 )
+from helm_dashboard.widgets import InfoHeader
 from helm_dashboard.screens import (
     ConfirmDialog,
     ContextScreen,
@@ -57,41 +59,26 @@ Screen {
     height: 1fr;
 }
 
-/* ── Top Bar ─────────────────────────────────────── */
-#top-bar {
-    height: 3;
-    background: $primary-darken-3;
+/* ── Search / Status Bar ─────────────────────────── */
+#search-bar {
+    height: 1;
+    background: $primary-darken-2;
     color: $text;
     padding: 0 1;
     layout: horizontal;
 }
 
-#logo {
-    width: auto;
-    color: $success;
-    text-style: bold;
-    padding: 1 2 0 1;
-}
-
-#context-label {
-    width: auto;
-    padding: 1 2 0 0;
-    color: $warning;
-}
-
-#namespace-select {
-    width: 30;
-    margin: 0 1;
-}
-
 #search-input {
     width: 30;
     margin: 0 1;
+    border: none;
+    height: 1;
+    background: $primary-darken-1;
 }
 
 #status-bar {
     width: 1fr;
-    padding: 1 1 0 0;
+    padding: 0 1;
     text-align: right;
     color: $text-muted;
 }
@@ -260,8 +247,15 @@ class HelmDashboard(App):
     selected_release: reactive[HelmRelease | None] = reactive(None)
     search_filter: reactive[str] = reactive("")
     status_message: reactive[str] = reactive("")
-    auto_refresh_interval: reactive[int] = reactive(0)
+    auto_refresh_interval: reactive[int] = reactive(30)
     _pending_contexts: reactive[list[str] | None] = reactive(None)
+    # Cluster info for the header
+    _cluster_name: reactive[str] = reactive("…")
+    _user_name: reactive[str] = reactive("…")
+    _helm_version: reactive[str] = reactive("…")
+    _k8s_version: reactive[str] = reactive("…")
+    _cpu_pct: reactive[str] = reactive("…")
+    _mem_pct: reactive[str] = reactive("…")
 
     def __init__(self) -> None:
         super().__init__()
@@ -269,11 +263,9 @@ class HelmDashboard(App):
         self._upgrade_available: dict[str, bool] = {}  # release_name -> True if newer version available
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield InfoHeader(id="info-header")
 
-        with Horizontal(id="top-bar"):
-            yield Static("⎈ H9S", id="logo")
-            yield Static("ctx: loading...", id="context-label")
+        with Horizontal(id="search-bar"):
             yield Input(placeholder="🔍 Filter releases...", id="search-input")
             yield Static("", id="status-bar")
 
@@ -300,41 +292,81 @@ class HelmDashboard(App):
             self.notify(
                 f"Helm not found: {version}", severity="error", timeout=10
             )
-            self.sub_title = "⚠️  Helm CLI not found"
             return
 
-        self.sub_title = f"Helm {version}"
+        self._helm_version = version
 
         # Load context and data
         self.current_context = await get_current_context()
         self._namespaces = await get_namespaces()
 
+        # Push initial namespace list to header
+        self._push_namespaces_to_header()
+
+        # Kick off background info loaders
+        self._load_cluster_info()
+        self._load_k8s_version()
+        self._start_resource_polling()
+
         self.load_releases()
+        self._start_auto_refresh()
         self.query_one("#release-table", DataTable).focus()
 
     def watch_current_context(self, value: str) -> None:
         try:
-            label = self.query_one("#context-label", Static)
-            label.update(f"ctx: [bold yellow]{escape(value)}[/bold yellow]")
+            self.query_one("#info-header", InfoHeader).context_name = value
         except NoMatches:
             pass
 
     def watch_status_message(self, value: str) -> None:
         try:
             bar = self.query_one("#status-bar", Static)
-            interval = self.auto_refresh_interval
-            if interval > 0 and interval in self._REFRESH_INTERVALS:
-                idx = self._REFRESH_INTERVALS.index(interval)
-                ar_label = f"  [dim]⟳ {self._REFRESH_LABELS[idx]}[/dim]"
-            else:
-                ar_label = ""
-            bar.update(value + ar_label)
+            bar.update(value)
         except NoMatches:
             pass
 
     def watch_auto_refresh_interval(self, value: int) -> None:
-        """Immediately re-render the status bar to show the new interval label."""
-        self.watch_status_message(self.status_message)
+        label = self._REFRESH_LABELS[self._REFRESH_INTERVALS.index(value)] if value in self._REFRESH_INTERVALS else "off"
+        try:
+            self.query_one("#info-header", InfoHeader).auto_refresh_label = label
+        except NoMatches:
+            pass
+
+    def watch__cluster_name(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).cluster_name = value
+        except NoMatches:
+            pass
+
+    def watch__user_name(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).user_name = value
+        except NoMatches:
+            pass
+
+    def watch__helm_version(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).helm_version = value
+        except NoMatches:
+            pass
+
+    def watch__k8s_version(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).k8s_version = value
+        except NoMatches:
+            pass
+
+    def watch__cpu_pct(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).cpu_pct = value
+        except NoMatches:
+            pass
+
+    def watch__mem_pct(self, value: str) -> None:
+        try:
+            self.query_one("#info-header", InfoHeader).mem_pct = value
+        except NoMatches:
+            pass
 
     @on(Input.Changed, "#search-input")
     def on_search_changed(self, event: Input.Changed) -> None:
@@ -362,7 +394,58 @@ class HelmDashboard(App):
             if 0 <= idx < len(filtered):
                 self.selected_release = filtered[idx]
 
+    def _push_namespaces_to_header(self) -> None:
+        """Push current namespace list into the InfoHeader widget."""
+        try:
+            self.query_one("#info-header", InfoHeader).namespaces = list(self._namespaces)
+        except NoMatches:
+            pass
+
+    # ── Background info workers ────────────────────────────────────────────────
+
+    @work(thread=False)
+    async def _load_cluster_info(self) -> None:
+        cluster, user = await get_cluster_info()
+        self._cluster_name = cluster
+        self._user_name = user
+
+    @work(thread=False)
+    async def _load_k8s_version(self) -> None:
+        self._k8s_version = await get_k8s_server_version()
+
+    @work(thread=False, exclusive=True)
+    async def _start_resource_polling(self) -> None:
+        """Poll node CPU/MEM every 10 seconds indefinitely."""
+        while True:
+            cpu, mem = await get_node_resources()
+            self._cpu_pct = cpu
+            self._mem_pct = mem
+            await asyncio.sleep(10)
+
     # ── Actions ───────────────────────────────────────────────────────────────
+
+    def on_key(self, event) -> None:  # type: ignore[override]
+        """Handle digit keys for quick namespace switching (only on main screen)."""
+        if len(self.screen_stack) > 1:
+            return  # don't intercept keys while a modal is open
+        # Only handle if search input is NOT focused
+        search = self.query_one("#search-input", Input)
+        if search.has_focus:
+            return
+        if event.key == "0":
+            event.stop()
+            if self.selected_namespaces:
+                self.selected_namespaces = frozenset()
+                self.notify("Namespace: All", timeout=2)
+                self.load_releases()
+        elif event.key.isdigit():
+            idx = int(event.key) - 1
+            if 0 <= idx < len(self._namespaces):
+                event.stop()
+                ns = self._namespaces[idx]
+                self.selected_namespaces = frozenset({ns})
+                self.notify(f"Namespace: {ns}", timeout=2)
+                self.load_releases()
 
     def action_toggle_auto_refresh(self) -> None:
         intervals = self._REFRESH_INTERVALS
@@ -514,6 +597,9 @@ class HelmDashboard(App):
             self.current_context = context_name
             self.selected_namespaces = frozenset()
             self._namespaces = await get_namespaces()
+            self._push_namespaces_to_header()
+            self._load_cluster_info()
+            self._load_k8s_version()
             self.notify(f"⎈ Switched to {context_name}", timeout=3)
             self.load_releases()
         else:

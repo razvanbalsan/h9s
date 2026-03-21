@@ -716,6 +716,72 @@ async def stream_pod_logs(
     return output or "(no log output)"
 
 
+async def get_cluster_info() -> tuple[str, str]:
+    """Get cluster name and user from the current kubeconfig context.
+
+    Returns:
+        Tuple of (cluster_name, user_name).
+    """
+    rc, stdout, _ = await _run_kubectl(
+        "config", "view", "--minify", "-o", "json", timeout=5.0
+    )
+    if rc != 0:
+        return "unknown", "unknown"
+    try:
+        data = json.loads(stdout.decode("utf-8", errors="replace"))
+        current = data.get("current-context", "")
+        contexts = data.get("contexts") or []
+        ctx_entry = next((c for c in contexts if c.get("name") == current), None)
+        if ctx_entry:
+            ctx_data = ctx_entry.get("context", {}) or {}
+            return ctx_data.get("cluster", "unknown"), ctx_data.get("user", "unknown")
+        return "unknown", "unknown"
+    except Exception:
+        return "unknown", "unknown"
+
+
+async def get_k8s_server_version() -> str:
+    """Get the Kubernetes server version string, e.g. 'v1.33.6'.
+
+    Returns 'unknown' if kubectl is unavailable or the API server is unreachable.
+    """
+    rc, stdout, _ = await _run_kubectl("version", "-o", "json", timeout=8.0)
+    if rc != 0:
+        return "unknown"
+    try:
+        data = json.loads(stdout.decode("utf-8", errors="replace"))
+        sv = data.get("serverVersion", {})
+        return sv.get("gitVersion", "unknown")
+    except Exception:
+        return "unknown"
+
+
+async def get_node_resources() -> tuple[str, str]:
+    """Return average CPU% and MEM% across all nodes via kubectl top nodes.
+
+    Returns:
+        Tuple (cpu_str, mem_str) e.g. ("12%", "44%").
+        Returns ("N/A", "N/A") when metrics-server is unavailable.
+    """
+    rc, stdout, _ = await _run_kubectl("top", "nodes", "--no-headers", timeout=10.0)
+    if rc != 0:
+        return "N/A", "N/A"
+    cpu_vals: list[int] = []
+    mem_vals: list[int] = []
+    for line in stdout.decode("utf-8", errors="replace").strip().splitlines():
+        parts = line.split()
+        # Format: NAME  CPU(cores)  CPU%  MEMORY(bytes)  MEMORY%
+        if len(parts) >= 5:
+            try:
+                cpu_vals.append(int(parts[2].rstrip("%")))
+                mem_vals.append(int(parts[4].rstrip("%")))
+            except (ValueError, IndexError):
+                pass
+    if not cpu_vals:
+        return "N/A", "N/A"
+    return f"{sum(cpu_vals) // len(cpu_vals)}%", f"{sum(mem_vals) // len(mem_vals)}%"
+
+
 async def describe_resource(kind: str, name: str, namespace: str) -> str:
     """Run kubectl describe on a specific resource."""
     rc, stdout, stderr = await _run_kubectl(

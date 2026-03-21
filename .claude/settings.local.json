@@ -26,7 +26,21 @@
       "Bash(git -C /Users/razvanbalsan/Projects/h9s rm helm-dashboard)",
       "Bash(git:*)",
       "Bash(gh auth:*)",
-      "Bash(gh release:*)"
+      "Bash(gh release:*)",
+      "Bash(curl -sL https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.0.tar.gz)",
+      "Bash(shasum -a 256)",
+      "Bash(curl -sL https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.1.tar.gz)",
+      "Bash(make check:*)",
+      "Bash(ruff check:*)",
+      "Bash(mypy helm_dashboard/screens/describe.py)",
+      "Bash(sed -i '' 's/version = \"\"1.0.1\"\"/version = \"\"1.0.2\"\"/' /Users/razvanbalsan/Projects/h9s/pyproject.toml)",
+      "Bash(sed -i '' 's/__version__ = \"\"1.0.1\"\"/__version__ = \"\"1.0.2\"\"/' /Users/razvanbalsan/Projects/h9s/helm_dashboard/__init__.py)",
+      "Bash(curl -sL https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.2.tar.gz)",
+      "Bash(mypy helm_dashboard/)",
+      "Bash(pytest)",
+      "Bash(curl -sL https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.3.tar.gz)",
+      "Bash(gh run:*)",
+      "Bash(curl -sL https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.4.tar.gz)"
     ]
   },
   "enableAllProjectMcpServers": true,
