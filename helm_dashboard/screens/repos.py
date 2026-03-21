@@ -134,7 +134,7 @@ class RepoScreen(ModalScreen[None]):
             if repo_name:
                 self.app.push_screen(
                     ConfirmDialog(f"Remove repository [bold]{repo_name}[/bold]?", "Remove Repo"),
-                    callback=lambda confirmed: self._do_remove_repo(repo_name) if confirmed else None,
+                    callback=lambda confirmed, n=repo_name: self._do_remove_repo(n) if confirmed else None,  # type: ignore[arg-type]
                 )
 
     @work(thread=False)

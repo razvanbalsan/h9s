@@ -6,9 +6,10 @@ import asyncio
 import difflib
 import json
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 import yaml
 
@@ -125,6 +126,136 @@ class HelmChart:
     chart_version: str
     app_version: str
     description: str
+
+
+@dataclass
+class K8sResource:
+    """A Kubernetes resource belonging to a release."""
+    kind: str
+    name: str
+    namespace: str
+    ready: str    # e.g. "1/1", "-"
+    status: str   # e.g. "Running", "ClusterIP"
+    age: str      # e.g. "2d", "5m"
+
+
+@dataclass
+class K8sEvent:
+    """A Kubernetes event."""
+    age: str          # relative age, e.g. "3m"
+    last_seen: str    # absolute, truncated: "2026-03-21 14:05:01"
+    type: str         # "Normal" or "Warning"
+    reason: str
+    object_ref: str   # "Pod/my-pod-xxx"
+    message: str
+    count: int
+
+
+# ── Kubernetes helpers ─────────────────────────────────────────────────────────
+
+_KIND_ICONS: dict[str, str] = {
+    "Pod": "🫛",
+    "Deployment": "🚀",
+    "ReplicaSet": "📋",
+    "StatefulSet": "🗄️",
+    "DaemonSet": "👾",
+    "Service": "🔗",
+    "Ingress": "🌐",
+    "ConfigMap": "📄",
+    "Secret": "🔒",
+    "PersistentVolumeClaim": "💾",
+    "Job": "⚙️",
+    "CronJob": "🕐",
+    "ServiceAccount": "👤",
+    "HorizontalPodAutoscaler": "📊",
+    "NetworkPolicy": "🛡️",
+}
+
+
+def _age_from_timestamp(ts: str) -> str:
+    """Convert an ISO 8601 timestamp to a human-readable age string."""
+    if not ts:
+        return "?"
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        now = datetime.now(tz=timezone.utc)
+        secs = int((now - dt).total_seconds())
+        if secs < 90:
+            return f"{secs}s"
+        mins = secs // 60
+        if mins < 90:
+            return f"{mins}m"
+        hours = mins // 60
+        if hours < 48:
+            return f"{hours}h"
+        return f"{hours // 24}d"
+    except Exception:
+        return "?"
+
+
+def _resource_ready_status(item: dict[str, Any]) -> tuple[str, str]:
+    """Return (ready, status) strings for any resource kind."""
+    kind = item.get("kind", "")
+    status = item.get("status", {}) or {}
+    spec = item.get("spec", {}) or {}
+
+    if kind == "Pod":
+        phase = status.get("phase", "Unknown")
+        cs_list = status.get("containerStatuses", []) or []
+        ready_n = sum(1 for cs in cs_list if cs.get("ready"))
+        total_n = len(cs_list)
+        ready = f"{ready_n}/{total_n}" if total_n else "0/?"
+        for cs in cs_list:
+            reason = cs.get("state", {}).get("waiting", {}).get("reason", "")
+            if reason in ("CrashLoopBackOff", "Error", "ImagePullBackOff", "ErrImagePull", "OOMKilled"):
+                return ready, reason
+        return ready, phase
+
+    if kind in ("Deployment", "ReplicaSet", "StatefulSet"):
+        desired = status.get("replicas") or spec.get("replicas") or 0
+        ready_n = status.get("readyReplicas") or 0
+        label = "Ready" if ready_n == desired and desired > 0 else "Not Ready"
+        return f"{ready_n}/{desired}", label
+
+    if kind == "DaemonSet":
+        desired = status.get("desiredNumberScheduled") or 0
+        ready_n = status.get("numberReady") or 0
+        return f"{ready_n}/{desired}", "Ready" if ready_n == desired else "Not Ready"
+
+    if kind == "Service":
+        return "-", spec.get("type", "ClusterIP")
+
+    if kind == "Job":
+        succeeded = status.get("succeeded") or 0
+        completions = spec.get("completions") or 1
+        active = status.get("active") or 0
+        if succeeded >= completions:
+            return f"{succeeded}/{completions}", "Complete"
+        return f"{succeeded}/{completions}", "Active" if active else "Failed"
+
+    if kind == "CronJob":
+        last = status.get("lastScheduleTime", "")
+        active_n = len(status.get("active") or [])
+        return str(active_n), f"Last: {last[:10]}" if last else "Never"
+
+    if kind == "PersistentVolumeClaim":
+        return "-", status.get("phase", "-")
+
+    return "-", "-"
+
+
+def _parse_resource_item(item: dict[str, Any]) -> K8sResource:
+    kind = item.get("kind", "Unknown")
+    meta = item.get("metadata", {}) or {}
+    ready, status = _resource_ready_status(item)
+    return K8sResource(
+        kind=kind,
+        name=meta.get("name", ""),
+        namespace=meta.get("namespace", ""),
+        ready=ready,
+        status=status,
+        age=_age_from_timestamp(meta.get("creationTimestamp", "")),
+    )
 
 
 async def _run_helm(*args: str, timeout: float = 30.0) -> tuple[int, str, str]:
@@ -467,24 +598,42 @@ async def get_available_chart_versions(chart_name: str) -> list[HelmChart]:
     ]
 
 
-async def get_release_events(name: str, namespace: str) -> str:
-    """Get Kubernetes events for resources in a release's namespace.
-
-    Fetches all events in the namespace sorted by timestamp.
-    The release name is included for display context.
-    """
-    rc, stdout, stderr = await _run_kubectl(
+async def get_release_events(name: str, namespace: str) -> list[K8sEvent]:
+    """Get Kubernetes events in the release namespace, newest first."""
+    rc, stdout, _ = await _run_kubectl(
         "get", "events",
         "--namespace", namespace,
         "--sort-by=.lastTimestamp",
-        "-o", "wide",
+        "-o", "json",
         timeout=15.0,
     )
-    output = stdout.decode("utf-8", errors="replace")
-    if rc != 0 or not output.strip():
-        err = stderr.decode("utf-8", errors="replace")
-        return f"No events found in namespace '{namespace}'\n{err}"
-    return output
+    if rc != 0:
+        return []
+    try:
+        data = json.loads(stdout.decode("utf-8", errors="replace"))
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+    events: list[K8sEvent] = []
+    for item in data.get("items", []):
+        last_ts = (
+            item.get("lastTimestamp")
+            or item.get("eventTime")
+            or item.get("firstTimestamp")
+            or ""
+        )
+        obj = item.get("involvedObject", {}) or {}
+        events.append(K8sEvent(
+            age=_age_from_timestamp(last_ts),
+            last_seen=last_ts[:19].replace("T", " ") if last_ts else "?",
+            type=item.get("type", "Normal"),
+            reason=item.get("reason", ""),
+            object_ref=f"{obj.get('kind', '?')}/{obj.get('name', '?')}",
+            message=item.get("message", ""),
+            count=item.get("count", 1) or 1,
+        ))
+    # Newest first
+    return list(reversed(events))
 
 
 async def list_pods_for_release(name: str, namespace: str) -> list[dict[str, str]]:
@@ -568,8 +717,8 @@ def _parse_manifest_resource_names(manifest: str) -> list[tuple[str, str]]:
     return results
 
 
-async def get_release_resources(name: str, namespace: str) -> str:
-    """Get Kubernetes resources for a release.
+async def get_release_resources(name: str, namespace: str) -> list[K8sResource]:
+    """Get Kubernetes resources for a release as structured data.
 
     Tries three strategies in order:
     1. Label selector: app.kubernetes.io/instance=<name>
@@ -578,43 +727,46 @@ async def get_release_resources(name: str, namespace: str) -> str:
     """
     from collections import defaultdict
 
+    def _parse_items(raw: bytes) -> list[K8sResource]:
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+            return [_parse_resource_item(i) for i in data.get("items", [])]
+        except (json.JSONDecodeError, AttributeError):
+            return []
+
     # Strategy 1 & 2: label selectors
     for label in (f"app.kubernetes.io/instance={name}", f"release={name}"):
-        rc, stdout_bytes, _ = await _run_kubectl(
+        rc, stdout, _ = await _run_kubectl(
             "get", "all", "-l", label,
-            "--namespace", namespace, "-o", "wide",
+            "--namespace", namespace, "-o", "json",
             timeout=15.0,
         )
-        output = stdout_bytes.decode("utf-8", errors="replace")
-        if output.strip() and "No resources found" not in output:
-            return output
+        if rc == 0 and stdout:
+            items = _parse_items(stdout)
+            if items:
+                return sorted(items, key=lambda r: (r.kind, r.name))
 
-    # Strategy 3: parse the manifest
-    # _run_helm returns tuple[int, str, str] — stdout is already a decoded str.
-    rc, manifest, _ = await _run_helm(
-        "get", "manifest", name, "--namespace", namespace
-    )
+    # Strategy 3: parse manifest
+    rc, manifest, _ = await _run_helm("get", "manifest", name, "--namespace", namespace)
     if rc != 0:
-        return f"No resources found for release '{name}'"
+        return []
 
     resource_pairs = _parse_manifest_resource_names(manifest)
     if not resource_pairs:
-        return f"No resources found for release '{name}'"
+        return []
 
-    # Group by kind for a single kubectl call per kind
     by_kind: dict[str, list[str]] = defaultdict(list)
     for kind, res_name in resource_pairs:
         by_kind[kind].append(res_name)
 
-    sections: list[str] = []
+    results: list[K8sResource] = []
     for kind, names in by_kind.items():
-        rc, out_bytes, _ = await _run_kubectl(
+        rc, out, _ = await _run_kubectl(
             "get", kind, *names,
-            "--namespace", namespace, "-o", "wide",
+            "--namespace", namespace, "-o", "json",
             timeout=15.0,
         )
-        out = out_bytes.decode("utf-8", errors="replace")
-        if out.strip():
-            sections.append(out)
+        if rc == 0 and out:
+            results.extend(_parse_items(out))
 
-    return "\n".join(sections) if sections else f"No resources found for release '{name}'"
+    return sorted(results, key=lambda r: (r.kind, r.name))

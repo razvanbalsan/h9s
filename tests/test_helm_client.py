@@ -4,10 +4,8 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-import pytest
 
 from helm_dashboard.helm_client import (
-    HelmChart,
     HelmRevision,
     ReleaseStatus,
     get_available_chart_versions,
@@ -62,16 +60,37 @@ def test_get_contexts_returns_list_on_error():
     asyncio.run(run())
 
 
-def test_get_release_events_returns_string():
-    """get_release_events always returns a string."""
+def test_get_release_events_returns_list():
+    """get_release_events returns a list of K8sEvent (empty when kubectl output is not JSON)."""
+    from helm_dashboard.helm_client import K8sEvent
+
     async def run():
+        # Non-JSON output → empty list (graceful degradation)
         with patch(
             "helm_dashboard.helm_client._run_kubectl",
-            new=AsyncMock(return_value=(0, b"Events:\n  Normal  Pulled  1m  kubelet  image pulled", b"")),
+            new=AsyncMock(return_value=(0, b"not json", b"")),
         ):
             result = await get_release_events("my-release", "default")
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert isinstance(result, list)
+
+        # Proper JSON → parsed events
+        import json
+        payload = json.dumps({"items": [{
+            "type": "Warning", "reason": "BackOff",
+            "involvedObject": {"kind": "Pod", "name": "my-pod"},
+            "message": "Back-off restarting",
+            "count": 3,
+            "lastTimestamp": "2026-03-21T10:00:00Z",
+        }]}).encode()
+        with patch(
+            "helm_dashboard.helm_client._run_kubectl",
+            new=AsyncMock(return_value=(0, payload, b"")),
+        ):
+            result = await get_release_events("my-release", "default")
+        assert len(result) == 1
+        assert isinstance(result[0], K8sEvent)
+        assert result[0].type == "Warning"
+        assert result[0].count == 3
 
     asyncio.run(run())
 

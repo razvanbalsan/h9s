@@ -8,58 +8,32 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import sys
-from datetime import datetime
 
 from rich.markup import escape
-from rich.syntax import Syntax
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.screen import ModalScreen
 from textual.widgets import (
-    Button,
     DataTable,
     Footer,
     Header,
     Input,
-    Label,
-    ListItem,
-    ListView,
-    LoadingIndicator,
-    OptionList,
-    RichLog,
-    Select,
     Static,
-    TabbedContent,
-    TabPane,
-    TextArea,
 )
 
 from helm_dashboard.helm_client import (
     HelmRelease,
-    HelmRepo,
     ReleaseStatus,
     _install_asyncio_error_filter,
-    add_repo,
     check_helm_available,
     get_current_context,
     get_namespaces,
-    get_release_history,
-    get_release_hooks,
-    get_release_manifest,
-    get_release_notes,
-    get_release_resources,
-    get_release_values,
     list_releases,
-    list_repos,
-    remove_repo,
     rollback_release,
-    search_charts,
     uninstall_release,
     update_repos,
 )
@@ -68,7 +42,6 @@ from helm_dashboard.screens import (
     ContextScreen,
     DetailScreen,
     HelpScreen,
-    InputDialog,
     NamespaceScreen,
     RepoScreen,
 )
@@ -454,7 +427,7 @@ class HelmDashboard(App):
             callback=self._handle_rollback,
         )
 
-    def _handle_rollback(self, confirmed: bool) -> None:
+    def _handle_rollback(self, confirmed: bool | None) -> None:
         if confirmed and self.selected_release:
             self._do_rollback(self.selected_release)
 
@@ -484,7 +457,7 @@ class HelmDashboard(App):
             callback=self._handle_uninstall,
         )
 
-    def _handle_uninstall(self, confirmed: bool) -> None:
+    def _handle_uninstall(self, confirmed: bool | None) -> None:
         if confirmed and self.selected_release:
             self._do_uninstall(self.selected_release)
 

@@ -56,8 +56,9 @@ class DescribeScreen(ModalScreen[None]):
     @work(thread=False)
     async def _load_describe(self) -> None:
         log = self.query_one("#desc-output", RichLog)
-        log.write(f"Loading describe for {self._kind}/{self._name}...\n")
-        output = await describe_resource(self._kind, self._name, self._namespace)
+        name: str = self._name or ""
+        log.write(f"Loading describe for {self._kind}/{name}...\n")
+        output = await describe_resource(self._kind, name, self._namespace)
         log.clear()
         log.write(output)
 
