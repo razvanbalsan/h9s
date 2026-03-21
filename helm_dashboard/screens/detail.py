@@ -156,7 +156,7 @@ class DetailScreen(ModalScreen[None]):
                     id="detail-title",
                 )
                 yield Static(
-                    "[dim]Esc: Back  |  1-8: Tabs  |  Space: Select  |  y: Copy  |  w: Wrap[/dim]",
+                    "[dim]Esc: Back  |  1-8: Tabs  |  Space: Select  |  y: Copy  |  Ctrl+C: Copy selection  |  w: Wrap[/dim]",
                     id="detail-hint",
                 )
             with TabbedContent(id="detail-tabs"):
@@ -213,9 +213,10 @@ class DetailScreen(ModalScreen[None]):
         evt_table.add_column("", key=_SEL_COL)
         evt_table.add_columns("Age", "Last Seen", "Type", "Reason", "Object", "Message")
 
-        # Apply initial wrap state to TextArea widgets
+        # Sync initial wrap state across all text widgets
         for ta_id in ("#values-text", "#manifest-text", "#notes-text", "#hooks-text"):
             self.query_one(ta_id, TextArea).soft_wrap = self._wrap
+        self.query_one("#overview-log", RichLog).wrap = self._wrap
 
         self._load_details()
 
@@ -224,12 +225,20 @@ class DetailScreen(ModalScreen[None]):
         if new_wrap == self._wrap:
             return
         self._wrap = new_wrap
-        # Apply instantly to all TextArea widgets (no reload needed)
+        # TextArea: instant reflow, no reload
         for ta_id in ("#values-text", "#manifest-text", "#notes-text", "#hooks-text"):
             try:
                 self.query_one(ta_id, TextArea).soft_wrap = self._wrap
             except Exception:
                 pass
+        # RichLog (Overview): must clear and rewrite to reflow
+        try:
+            log = self.query_one("#overview-log", RichLog)
+            log.wrap = self._wrap
+            log.clear()
+            self._write_overview(log)
+        except Exception:
+            pass
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Track the highlighted row key per table for multi-select and diff."""
@@ -245,6 +254,7 @@ class DetailScreen(ModalScreen[None]):
 
         # Overview
         overview_log = self.query_one("#overview-log", RichLog)
+        overview_log.wrap = self._wrap
         overview_log.clear()
         self._write_overview(overview_log)
 
@@ -462,8 +472,39 @@ class DetailScreen(ModalScreen[None]):
         )
 
     def action_copy_row(self) -> None:
-        """Copy selected rows (or the cursor row) to the system clipboard (y key)."""
+        """Copy to clipboard: rows in table tabs, full text in text tabs (y key)."""
         active_tab = self.query_one("#detail-tabs", TabbedContent).active
+
+        # Text tabs: copy full content
+        _ta_tabs = {
+            "tab-values": "#values-text",
+            "tab-manifest": "#manifest-text",
+            "tab-notes": "#notes-text",
+            "tab-hooks": "#hooks-text",
+        }
+        if active_tab in _ta_tabs:
+            text = self.query_one(_ta_tabs[active_tab], TextArea).text
+            self.app.copy_to_clipboard(text)
+            self.notify(f"Copied {len(text)} chars", timeout=2)
+            return
+        if active_tab == "tab-overview":
+            rel = self._release
+            text = (
+                f"Release: {rel.name}\n"
+                f"Namespace: {rel.namespace}\n"
+                f"Status: {rel.status.value}\n"
+                f"Revision: {rel.revision}\n"
+                f"Chart: {rel.chart}\n"
+                f"Chart Version: {rel.chart_version}\n"
+                f"App Version: {rel.app_version}\n"
+                f"Updated: {rel.updated}\n"
+                f"Description: {rel.description}\n"
+            )
+            self.app.copy_to_clipboard(text)
+            self.notify("Overview copied to clipboard", timeout=2)
+            return
+
+        # DataTable tabs: copy selected or cursor row
         table_id = _ROW_COPY_TABLES.get(active_tab)
         if not table_id:
             return
