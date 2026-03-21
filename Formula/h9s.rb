@@ -1,8 +1,8 @@
 class H9s < Formula
   desc "k9s-style terminal UI dashboard for Helm releases on Kubernetes"
   homepage "https://github.com/razvanbalsan/h9s"
-  url "https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "6d3f91ee147f35c70897eb4506382efe12268843e50600d130b4232236608c53"
+  url "https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.1.tar.gz"
+  sha256 "e0ae4c5ae9421bc4e3b55f46f5361825e0b4685a2b889fafbf47d520b349931d"
   license "MIT"
   head "https://github.com/razvanbalsan/h9s.git", branch: "main"
 
