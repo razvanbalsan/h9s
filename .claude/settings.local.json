@@ -24,7 +24,9 @@
       "Bash(pytest tests/ -q)",
       "Bash(source /Users/razvanbalsan/Projects/h9s/.venv/bin/activate)",
       "Bash(git -C /Users/razvanbalsan/Projects/h9s rm helm-dashboard)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(gh auth:*)",
+      "Bash(gh release:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
