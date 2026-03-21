@@ -85,6 +85,11 @@ class HelmRelease:
         }
         return icons.get(self.status, "❓")
 
+    @property
+    def is_rollback(self) -> bool:
+        """True when this revision was created by a helm rollback."""
+        return "rollback" in self.description.lower()
+
 
 @dataclass
 class HelmRevision:

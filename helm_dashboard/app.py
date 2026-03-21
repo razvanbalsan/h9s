@@ -291,7 +291,7 @@ class HelmDashboard(App):
         # Set up release table columns
         table = self.query_one("#release-table", DataTable)
         table.add_columns(
-            "Status", "Name", "Namespace", "Revision", "Chart", "Version", "App Ver", "Updated", "⬆"
+            "Status", "Name", "Namespace", "Revision", "Chart", "Version", "App Ver", "Updated", ""
         )
 
         # Check helm
@@ -604,17 +604,31 @@ class HelmDashboard(App):
             # Truncate the updated timestamp
             updated_short = rel.updated[:19] if len(rel.updated) > 19 else rel.updated
 
-            upgrade_flag = "⬆" if self._upgrade_available.get(rel.name, False) else ""
+            # Flags column: ⬆ upgrade available, ↩ rolled back
+            flags = Text()
+            if self._upgrade_available.get(rel.name, False):
+                flags.append("⬆", style="bold yellow")
+            if rel.is_rollback:
+                if flags:
+                    flags.append(" ")
+                flags.append("↩", style="bold dark_orange")
+
+            name_text = (
+                Text(rel.name, style="dark_orange")
+                if rel.is_rollback
+                else rel.name
+            )
+
             table.add_row(
                 status_text,
-                rel.name,
+                name_text,
                 rel.namespace,
                 str(rel.revision),
                 rel.chart,
                 rel.chart_version,
                 rel.app_version,
                 updated_short,
-                Text(upgrade_flag, style="bold yellow"),
+                flags,
                 key=str(i),
             )
 
