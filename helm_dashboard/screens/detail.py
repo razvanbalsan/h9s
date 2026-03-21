@@ -60,7 +60,6 @@ class DetailScreen(ModalScreen[None]):
         Binding("8", "tab_events", "Events", show=False),
         Binding("v", "diff_values", "Diff Values", show=False),
         Binding("y", "copy_row", "Copy row", show=False),
-        Binding("ctrl+c", "copy_selection", "Copy", show=False, priority=True),
     ]
 
     CSS = """
@@ -133,7 +132,7 @@ class DetailScreen(ModalScreen[None]):
                     id="detail-title",
                 )
                 yield Static(
-                    "[dim]Esc: Back  |  1-8: Tabs  |  Shift+arrows: Select  |  Ctrl+C: Copy  |  y: Copy row[/dim]",
+                    "[dim]Esc: Back  |  1-8: Tabs  |  Cmd+C: Copy selection  |  y: Copy row[/dim]",
                     id="detail-hint",
                 )
             with TabbedContent(id="detail-tabs"):
@@ -356,21 +355,6 @@ class DetailScreen(ModalScreen[None]):
         )
         self.app.copy_to_clipboard(text)
         self.notify("Row copied to clipboard", timeout=2)
-
-    def action_copy_selection(self) -> None:
-        """Copy selected text from a focused TextArea (Ctrl+C)."""
-        focused = self.focused
-        if isinstance(focused, TextArea):
-            text = focused.selected_text
-            if text:
-                self.app.copy_to_clipboard(text)
-                self.notify(f"Copied {len(text)} characters", timeout=2)
-            else:
-                self.notify(
-                    "No text selected — use Shift+arrows or click+drag to select",
-                    severity="warning",
-                    timeout=3,
-                )
 
     def action_diff_values(self) -> None:
         hist_table = self.query_one("#history-table", DataTable)
