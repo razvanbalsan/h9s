@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import asyncio
 
-import rich.box
-from rich.syntax import Syntax
-from rich.table import Table
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, RichLog, Static, TabbedContent, TabPane
+from textual.widgets import DataTable, RichLog, Static, TabbedContent, TabPane, TextArea
 
 from helm_dashboard.helm_client import (
     HelmRelease,
@@ -31,7 +28,6 @@ from helm_dashboard.helm_client import (
     get_values_for_revision,
 )
 
-
 _OK_STATUSES = frozenset({
     "Running", "Complete", "Ready", "Available",
     "ClusterIP", "NodePort", "LoadBalancer", "ExternalName",
@@ -42,67 +38,10 @@ _ERROR_STATUSES = frozenset({
     "ImagePullBackOff", "ErrImagePull", "OOMKilled",
 })
 
-
-def _build_resources_table(resources: list[K8sResource]) -> Table:
-    table = Table(
-        show_header=True,
-        header_style="bold cyan",
-        expand=True,
-        box=rich.box.SIMPLE_HEAD,
-        padding=(0, 1),
-    )
-    table.add_column("Kind", min_width=14)
-    table.add_column("Name", min_width=20, no_wrap=True)
-    table.add_column("Ready", justify="center", min_width=7)
-    table.add_column("Status", min_width=14)
-    table.add_column("Age", justify="right", min_width=5)
-
-    for r in resources:
-        icon = _KIND_ICONS.get(r.kind, "📦")
-        if r.status in _OK_STATUSES:
-            status_style = "green"
-        elif r.status in _ERROR_STATUSES:
-            status_style = "red bold"
-        else:
-            status_style = "yellow"
-
-        table.add_row(
-            f"{icon} {r.kind}",
-            r.name,
-            r.ready,
-            Text(r.status, style=status_style),
-            r.age,
-        )
-    return table
-
-
-def _build_events_table(events: list[K8sEvent]) -> Table:
-    table = Table(
-        show_header=True,
-        header_style="bold cyan",
-        expand=True,
-        box=rich.box.SIMPLE_HEAD,
-        padding=(0, 1),
-    )
-    table.add_column("Age", justify="right", min_width=5)
-    table.add_column("Last Seen", min_width=19, no_wrap=True)
-    table.add_column("Type", min_width=8)
-    table.add_column("Reason", min_width=18, no_wrap=True)
-    table.add_column("Object", min_width=22, no_wrap=True)
-    table.add_column("Message")
-
-    for e in events:
-        type_style = "red bold" if e.type == "Warning" else "dim"
-        count_suffix = f" ×{e.count}" if e.count > 1 else ""
-        table.add_row(
-            e.age,
-            e.last_seen,
-            Text(e.type, style=type_style),
-            e.reason,
-            e.object_ref,
-            e.message + count_suffix,
-        )
-    return table
+# DataTable IDs that support row-copy via 'y'
+_ROW_COPY_TABLES = {"tab-history": "#history-table",
+                    "tab-resources": "#resources-table",
+                    "tab-events": "#events-table"}
 
 
 class DetailScreen(ModalScreen[None]):
@@ -120,6 +59,7 @@ class DetailScreen(ModalScreen[None]):
         Binding("7", "tab_hooks", "Hooks", show=False),
         Binding("8", "tab_events", "Events", show=False),
         Binding("v", "diff_values", "Diff Values", show=False),
+        Binding("y", "copy_row", "Copy row", show=False),
     ]
 
     CSS = """
@@ -155,13 +95,25 @@ class DetailScreen(ModalScreen[None]):
         height: 1fr;
     }
 
+    /* Read-only TextArea tabs (Values, Manifest, Notes, Hooks) */
+    TextArea {
+        height: 1fr;
+        border: none;
+        padding: 0;
+    }
+
+    /* Remove the default focus border on TextArea */
+    TextArea:focus {
+        border: none;
+    }
+
     RichLog {
         height: 1fr;
         background: $surface;
         scrollbar-size: 1 1;
     }
 
-    #history-table {
+    #history-table, #resources-table, #events-table {
         height: 1fr;
     }
     """
@@ -179,7 +131,10 @@ class DetailScreen(ModalScreen[None]):
                     f"[dim]{rel.namespace}[/dim]",
                     id="detail-title",
                 )
-                yield Static("[dim]Esc: Back  |  1-8: Tabs[/dim]", id="detail-hint")
+                yield Static(
+                    "[dim]Esc: Back  |  1-8: Tabs  |  Ctrl+C: Copy selection  |  y: Copy row[/dim]",
+                    id="detail-hint",
+                )
             with TabbedContent(id="detail-tabs"):
                 with TabPane("Overview", id="tab-overview"):
                     yield RichLog(id="overview-log", wrap=True, markup=True)
@@ -188,30 +143,54 @@ class DetailScreen(ModalScreen[None]):
                         id="history-table", cursor_type="row", zebra_stripes=True
                     )
                 with TabPane("Values", id="tab-values"):
-                    yield RichLog(id="values-log", wrap=True, auto_scroll=False)
+                    yield TextArea(
+                        "", id="values-text",
+                        read_only=True, language="yaml",
+                        show_line_numbers=True, theme="monokai",
+                    )
                 with TabPane("Manifest", id="tab-manifest"):
-                    yield RichLog(id="manifest-log", wrap=True, auto_scroll=False)
+                    yield TextArea(
+                        "", id="manifest-text",
+                        read_only=True, language="yaml",
+                        show_line_numbers=True, theme="monokai",
+                    )
                 with TabPane("Resources", id="tab-resources"):
-                    yield RichLog(id="resources-log", wrap=True, markup=True)
+                    yield DataTable(
+                        id="resources-table", cursor_type="row", zebra_stripes=True
+                    )
                 with TabPane("Notes", id="tab-notes"):
-                    yield RichLog(id="notes-log", wrap=True, markup=True)
+                    yield TextArea(
+                        "", id="notes-text",
+                        read_only=True, theme="monokai",
+                    )
                 with TabPane("Hooks", id="tab-hooks"):
-                    yield RichLog(id="hooks-log", wrap=True, markup=True)
+                    yield TextArea(
+                        "", id="hooks-text",
+                        read_only=True, language="yaml",
+                        show_line_numbers=True, theme="monokai",
+                    )
                 with TabPane("Events", id="tab-events"):
-                    yield RichLog(id="events-log", wrap=True, markup=True)
+                    yield DataTable(
+                        id="events-table", cursor_type="row", zebra_stripes=True
+                    )
 
     async def on_mount(self) -> None:
-        # Set up history table columns
         hist_table = self.query_one("#history-table", DataTable)
         hist_table.add_columns("Rev", "Updated", "Status", "Chart", "App Ver", "Description")
-        # Load details
+
+        res_table = self.query_one("#resources-table", DataTable)
+        res_table.add_columns("Kind", "Name", "Ready", "Status", "Age")
+
+        evt_table = self.query_one("#events-table", DataTable)
+        evt_table.add_columns("Age", "Last Seen", "Type", "Reason", "Object", "Message")
+
         self._load_details()
 
     @work(thread=False)
     async def _load_details(self) -> None:
         rel = self._release
 
-        # Overview
+        # Overview (Rich markup — keep as RichLog)
         overview_log = self.query_one("#overview-log", RichLog)
         overview_log.clear()
         overview_log.write(
@@ -226,7 +205,7 @@ class DetailScreen(ModalScreen[None]):
             f"[bold cyan]Description:[/bold cyan] {rel.description}\n"
         )
 
-        # Load everything concurrently
+        # Load all tabs concurrently
         (
             history,
             values,
@@ -244,7 +223,7 @@ class DetailScreen(ModalScreen[None]):
             get_release_hooks(rel.name, rel.namespace),
             get_release_events(rel.name, rel.namespace),
         )
-        # Narrow types for mypy (asyncio.gather infers Sequence[object])
+        # Narrow types (asyncio.gather infers Sequence[object])
         history_: list[HelmRevision] = list(history)  # type: ignore[arg-type]
         values_: str = str(values)
         manifest_: str = str(manifest)
@@ -253,7 +232,7 @@ class DetailScreen(ModalScreen[None]):
         hooks_: str = str(hooks)
         events_: list[K8sEvent] = list(events)  # type: ignore[arg-type]
 
-        # History table
+        # ── History ──────────────────────────────────────────────────────────
         hist_table = self.query_one("#history-table", DataTable)
         hist_table.clear()
         for rev in reversed(history_):
@@ -271,48 +250,63 @@ class DetailScreen(ModalScreen[None]):
                 key=str(rev.revision),
             )
 
-        # Values
-        values_log = self.query_one("#values-log", RichLog)
-        values_log.clear()
-        values_log.write(Syntax(values_, "yaml", theme="monokai", line_numbers=True))
-        values_log.scroll_home(animate=False)
+        # ── Values (TextArea — selectable, Ctrl+C copies) ────────────────────
+        values_ta = self.query_one("#values-text", TextArea)
+        values_ta.language = "yaml"
+        values_ta.text = values_
+        values_ta.move_cursor((0, 0))
 
-        # Manifest
-        manifest_log = self.query_one("#manifest-log", RichLog)
-        manifest_log.clear()
-        manifest_log.write(Syntax(manifest_, "yaml", theme="monokai", line_numbers=True))
-        manifest_log.scroll_home(animate=False)
+        # ── Manifest (TextArea) ───────────────────────────────────────────────
+        manifest_ta = self.query_one("#manifest-text", TextArea)
+        manifest_ta.text = manifest_
+        manifest_ta.move_cursor((0, 0))
 
-        # Resources
-        resources_log = self.query_one("#resources-log", RichLog)
-        resources_log.clear()
-        resources_log.write(f"[bold cyan]Kubernetes Resources — {rel.name}[/bold cyan]\n")
-        if resources_:
-            resources_log.write(_build_resources_table(resources_))
-        else:
-            resources_log.write("[dim]No resources found for this release.[/dim]")
+        # ── Resources (DataTable — y copies selected row) ─────────────────────
+        res_table = self.query_one("#resources-table", DataTable)
+        res_table.clear()
+        for r in resources_:
+            icon = _KIND_ICONS.get(r.kind, "📦")
+            if r.status in _OK_STATUSES:
+                status_style = "green"
+            elif r.status in _ERROR_STATUSES:
+                status_style = "red bold"
+            else:
+                status_style = "yellow"
+            res_table.add_row(
+                f"{icon} {r.kind}",
+                r.name,
+                r.ready,
+                Text(r.status, style=status_style),
+                r.age,
+                key=f"{r.kind}/{r.name}",
+            )
 
-        # Notes
-        notes_log = self.query_one("#notes-log", RichLog)
-        notes_log.clear()
-        notes_log.write(f"[bold cyan]Release Notes — {rel.name}[/bold cyan]\n\n")
-        notes_log.write(notes_)
-        notes_log.scroll_home(animate=False)
+        # ── Notes (TextArea) ──────────────────────────────────────────────────
+        notes_ta = self.query_one("#notes-text", TextArea)
+        notes_ta.text = notes_
+        notes_ta.move_cursor((0, 0))
 
-        # Hooks
-        hooks_log = self.query_one("#hooks-log", RichLog)
-        hooks_log.clear()
-        hooks_log.write(Syntax(hooks_, "yaml", theme="monokai", line_numbers=True))
-        hooks_log.scroll_home(animate=False)
+        # ── Hooks (TextArea) ──────────────────────────────────────────────────
+        hooks_ta = self.query_one("#hooks-text", TextArea)
+        hooks_ta.text = hooks_
+        hooks_ta.move_cursor((0, 0))
 
-        # Events
-        events_log = self.query_one("#events-log", RichLog)
-        events_log.clear()
-        events_log.write(f"[bold cyan]Kubernetes Events — namespace: {rel.namespace}[/bold cyan]\n")
-        if events_:
-            events_log.write(_build_events_table(events_))
-        else:
-            events_log.write("[dim]No events found in this namespace.[/dim]")
+        # ── Events (DataTable — y copies selected row) ────────────────────────
+        evt_table = self.query_one("#events-table", DataTable)
+        evt_table.clear()
+        for e in events_:
+            type_text = Text(e.type, style="red bold" if e.type == "Warning" else "dim")
+            count_suffix = f" ×{e.count}" if e.count > 1 else ""
+            evt_table.add_row(
+                e.age,
+                e.last_seen,
+                type_text,
+                e.reason,
+                e.object_ref,
+                e.message + count_suffix,
+            )
+
+    # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -345,6 +339,23 @@ class DetailScreen(ModalScreen[None]):
     def action_tab_events(self) -> None:
         self.query_one("#detail-tabs", TabbedContent).active = "tab-events"
 
+    def action_copy_row(self) -> None:
+        """Copy the selected DataTable row to the system clipboard (y key)."""
+        active_tab = self.query_one("#detail-tabs", TabbedContent).active
+        table_id = _ROW_COPY_TABLES.get(active_tab)
+        if not table_id:
+            return
+        table = self.query_one(table_id, DataTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        row = table.get_row_at(table.cursor_row)
+        text = "\t".join(
+            cell.plain if isinstance(cell, Text) else str(cell)
+            for cell in row
+        )
+        self.app.copy_to_clipboard(text)
+        self.notify("Row copied to clipboard", timeout=2)
+
     def action_diff_values(self) -> None:
         hist_table = self.query_one("#history-table", DataTable)
         if hist_table.cursor_row is None or hist_table.row_count == 0:
@@ -363,16 +374,14 @@ class DetailScreen(ModalScreen[None]):
             get_release_values(rel.name, rel.namespace, all_values=True),
         )
         diff = diff_values(
-            old_values, new_values,
+            old_values, new_values,  # type: ignore[arg-type]
             old_label=f"revision {old_revision}",
             new_label=f"revision {rel.revision} (current)",
         )
-        values_log = self.query_one("#values-log", RichLog)
-        values_log.clear()
-        values_log.write(
-            f"[bold cyan]Values diff: rev {old_revision} → rev {rel.revision}[/bold cyan]\n\n"
-        )
-        values_log.write(Syntax(diff, "diff", theme="monokai"))
-        values_log.scroll_home(animate=False)
+        header = f"# Values diff: rev {old_revision} → rev {rel.revision} (current)\n\n"
+        values_ta = self.query_one("#values-text", TextArea)
+        values_ta.language = None   # plain text for diff (no yaml highlighting)
+        values_ta.text = header + diff
+        values_ta.move_cursor((0, 0))
         self.query_one("#detail-tabs", TabbedContent).active = "tab-values"
         self.notify(f"Diff: revision {old_revision} vs current", timeout=3)
