@@ -38,10 +38,19 @@ _ERROR_STATUSES = frozenset({
     "ImagePullBackOff", "ErrImagePull", "OOMKilled",
 })
 
-# DataTable IDs that support row-copy via 'y'
-_ROW_COPY_TABLES = {"tab-history": "#history-table",
-                    "tab-resources": "#resources-table",
-                    "tab-events": "#events-table"}
+# DataTable IDs that support row-copy via 'y' and multi-select via Space
+_ROW_COPY_TABLES = {
+    "tab-history": "#history-table",
+    "tab-resources": "#resources-table",
+    "tab-events": "#events-table",
+}
+
+# Selection column key (shared across all three tables)
+_SEL_COL = "sel"
+_SEL_MARKER = "●"
+
+# Terminal width below which text wraps by default
+_WRAP_THRESHOLD = 120
 
 
 class DetailScreen(ModalScreen[None]):
@@ -59,7 +68,9 @@ class DetailScreen(ModalScreen[None]):
         Binding("7", "tab_hooks", "Hooks", show=False),
         Binding("8", "tab_events", "Events", show=False),
         Binding("v", "diff_values", "Diff Values", show=False),
-        Binding("y", "copy_row", "Copy row", show=False),
+        Binding("space", "toggle_selection", "Select row", show=False),
+        Binding("y", "copy_row", "Copy row(s)", show=False),
+        Binding("w", "toggle_wrap", "Wrap", show=False),
     ]
 
     CSS = """
@@ -121,6 +132,19 @@ class DetailScreen(ModalScreen[None]):
     def __init__(self, release: HelmRelease) -> None:
         super().__init__()
         self._release = release
+        # Multi-select state: table_id → set of selected row key strings
+        self._selected_rows: dict[str, set[str]] = {
+            "#history-table": set(),
+            "#resources-table": set(),
+            "#events-table": set(),
+        }
+        # Tracks the currently highlighted row key per table (updated via RowHighlighted)
+        self._cursor_keys: dict[str, str | None] = {
+            "#history-table": None,
+            "#resources-table": None,
+            "#events-table": None,
+        }
+        self._wrap = False  # resolved properly at mount time
 
     def compose(self) -> ComposeResult:
         rel = self._release
@@ -132,7 +156,7 @@ class DetailScreen(ModalScreen[None]):
                     id="detail-title",
                 )
                 yield Static(
-                    "[dim]Esc: Back  |  1-8: Tabs  |  Cmd+C: Copy selection  |  y: Copy row[/dim]",
+                    "[dim]Esc: Back  |  1-8: Tabs  |  Space: Select  |  y: Copy  |  w: Wrap[/dim]",
                     id="detail-hint",
                 )
             with TabbedContent(id="detail-tabs"):
@@ -175,35 +199,54 @@ class DetailScreen(ModalScreen[None]):
                     )
 
     async def on_mount(self) -> None:
+        self._wrap = self.app.size.width < _WRAP_THRESHOLD
+
         hist_table = self.query_one("#history-table", DataTable)
+        hist_table.add_column("", key=_SEL_COL)
         hist_table.add_columns("Rev", "Updated", "Status", "Chart", "App Ver", "Description")
 
         res_table = self.query_one("#resources-table", DataTable)
+        res_table.add_column("", key=_SEL_COL)
         res_table.add_columns("Kind", "Name", "Ready", "Status", "Age")
 
         evt_table = self.query_one("#events-table", DataTable)
+        evt_table.add_column("", key=_SEL_COL)
         evt_table.add_columns("Age", "Last Seen", "Type", "Reason", "Object", "Message")
 
+        # Apply initial wrap state to TextArea widgets
+        for ta_id in ("#values-text", "#manifest-text", "#notes-text", "#hooks-text"):
+            self.query_one(ta_id, TextArea).soft_wrap = self._wrap
+
         self._load_details()
+
+    def on_resize(self, event) -> None:  # type: ignore[override]
+        new_wrap = event.size.width < _WRAP_THRESHOLD
+        if new_wrap == self._wrap:
+            return
+        self._wrap = new_wrap
+        # Apply instantly to all TextArea widgets (no reload needed)
+        for ta_id in ("#values-text", "#manifest-text", "#notes-text", "#hooks-text"):
+            try:
+                self.query_one(ta_id, TextArea).soft_wrap = self._wrap
+            except Exception:
+                pass
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Track the highlighted row key per table for multi-select and diff."""
+        table_id = f"#{event.data_table.id}"
+        if table_id in self._cursor_keys and event.row_key:
+            self._cursor_keys[table_id] = (
+                str(event.row_key.value) if event.row_key.value is not None else None
+            )
 
     @work(thread=False)
     async def _load_details(self) -> None:
         rel = self._release
 
-        # Overview (Rich markup — keep as RichLog)
+        # Overview
         overview_log = self.query_one("#overview-log", RichLog)
         overview_log.clear()
-        overview_log.write(
-            f"[bold cyan]Release:[/bold cyan]    {rel.name}\n"
-            f"[bold cyan]Namespace:[/bold cyan]  {rel.namespace}\n"
-            f"[bold cyan]Status:[/bold cyan]     {rel.status_icon} {rel.status.value}\n"
-            f"[bold cyan]Revision:[/bold cyan]   {rel.revision}\n"
-            f"[bold cyan]Chart:[/bold cyan]      {rel.chart}\n"
-            f"[bold cyan]Chart Ver:[/bold cyan]  {rel.chart_version}\n"
-            f"[bold cyan]App Ver:[/bold cyan]    {rel.app_version}\n"
-            f"[bold cyan]Updated:[/bold cyan]    {rel.updated}\n"
-            f"[bold cyan]Description:[/bold cyan] {rel.description}\n"
-        )
+        self._write_overview(overview_log)
 
         # Load all tabs concurrently
         (
@@ -223,7 +266,6 @@ class DetailScreen(ModalScreen[None]):
             get_release_hooks(rel.name, rel.namespace),
             get_release_events(rel.name, rel.namespace),
         )
-        # Narrow types (asyncio.gather infers Sequence[object])
         history_: list[HelmRevision] = list(history)  # type: ignore[arg-type]
         values_: str = str(values)
         manifest_: str = str(manifest)
@@ -234,6 +276,8 @@ class DetailScreen(ModalScreen[None]):
 
         # ── History ──────────────────────────────────────────────────────────
         hist_table = self.query_one("#history-table", DataTable)
+        self._selected_rows["#history-table"].clear()
+        self._cursor_keys["#history-table"] = None
         hist_table.clear()
         for rev in reversed(history_):
             status_style = {
@@ -241,6 +285,7 @@ class DetailScreen(ModalScreen[None]):
                 ReleaseStatus.FAILED: "red",
             }.get(rev.status, "dim")
             hist_table.add_row(
+                "",
                 str(rev.revision),
                 rev.updated[:19] if len(rev.updated) > 19 else rev.updated,
                 Text(f"{rev.status_icon} {rev.status.value}", style=status_style),
@@ -250,19 +295,23 @@ class DetailScreen(ModalScreen[None]):
                 key=str(rev.revision),
             )
 
-        # ── Values (TextArea — selectable, Ctrl+C copies) ────────────────────
+        # ── Values (TextArea) ────────────────────────────────────────────────
         values_ta = self.query_one("#values-text", TextArea)
         values_ta.language = "yaml"
+        values_ta.soft_wrap = self._wrap
         values_ta.text = values_
         values_ta.move_cursor((0, 0))
 
         # ── Manifest (TextArea) ───────────────────────────────────────────────
         manifest_ta = self.query_one("#manifest-text", TextArea)
+        manifest_ta.soft_wrap = self._wrap
         manifest_ta.text = manifest_
         manifest_ta.move_cursor((0, 0))
 
-        # ── Resources (DataTable — y copies selected row) ─────────────────────
+        # ── Resources ─────────────────────────────────────────────────────────
         res_table = self.query_one("#resources-table", DataTable)
+        self._selected_rows["#resources-table"].clear()
+        self._cursor_keys["#resources-table"] = None
         res_table.clear()
         for r in resources_:
             icon = _KIND_ICONS.get(r.kind, "📦")
@@ -273,6 +322,7 @@ class DetailScreen(ModalScreen[None]):
             else:
                 status_style = "yellow"
             res_table.add_row(
+                "",
                 f"{icon} {r.kind}",
                 r.name,
                 r.ready,
@@ -283,28 +333,75 @@ class DetailScreen(ModalScreen[None]):
 
         # ── Notes (TextArea) ──────────────────────────────────────────────────
         notes_ta = self.query_one("#notes-text", TextArea)
+        notes_ta.soft_wrap = self._wrap
         notes_ta.text = notes_
         notes_ta.move_cursor((0, 0))
 
         # ── Hooks (TextArea) ──────────────────────────────────────────────────
         hooks_ta = self.query_one("#hooks-text", TextArea)
+        hooks_ta.soft_wrap = self._wrap
         hooks_ta.text = hooks_
         hooks_ta.move_cursor((0, 0))
 
-        # ── Events (DataTable — y copies selected row) ────────────────────────
+        # ── Events ────────────────────────────────────────────────────────────
         evt_table = self.query_one("#events-table", DataTable)
+        self._selected_rows["#events-table"].clear()
+        self._cursor_keys["#events-table"] = None
         evt_table.clear()
-        for e in events_:
+        for i, e in enumerate(events_):
             type_text = Text(e.type, style="red bold" if e.type == "Warning" else "dim")
             count_suffix = f" ×{e.count}" if e.count > 1 else ""
             evt_table.add_row(
+                "",
                 e.age,
                 e.last_seen,
                 type_text,
                 e.reason,
                 e.object_ref,
                 e.message + count_suffix,
+                key=str(i),
             )
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _write_overview(self, log: RichLog) -> None:
+        """Write release metadata to an overview RichLog widget."""
+        rel = self._release
+        log.write(
+            f"[bold cyan]Release:[/bold cyan]    {rel.name}\n"
+            f"[bold cyan]Namespace:[/bold cyan]  {rel.namespace}\n"
+            f"[bold cyan]Status:[/bold cyan]     {rel.status_icon} {rel.status.value}\n"
+            f"[bold cyan]Revision:[/bold cyan]   {rel.revision}\n"
+            f"[bold cyan]Chart:[/bold cyan]      {rel.chart}\n"
+            f"[bold cyan]Chart Ver:[/bold cyan]  {rel.chart_version}\n"
+            f"[bold cyan]App Ver:[/bold cyan]    {rel.app_version}\n"
+            f"[bold cyan]Updated:[/bold cyan]    {rel.updated}\n"
+            f"[bold cyan]Description:[/bold cyan] {rel.description}\n"
+        )
+
+    def _row_cells_to_text(self, row: list) -> str:
+        """Convert row cells to tab-separated text, skipping the leading selection column."""
+        return "\t".join(
+            cell.plain if isinstance(cell, Text) else str(cell)
+            for cell in row[1:]  # index 0 is the "✓" selection column
+        )
+
+    def _apply_wrap_to_active_tab(self) -> None:
+        """Apply the current _wrap setting to the active tab's text widget."""
+        active_tab = self.query_one("#detail-tabs", TabbedContent).active
+        ta_map = {
+            "tab-values": "#values-text",
+            "tab-manifest": "#manifest-text",
+            "tab-notes": "#notes-text",
+            "tab-hooks": "#hooks-text",
+        }
+        if active_tab in ta_map:
+            self.query_one(ta_map[active_tab], TextArea).soft_wrap = self._wrap
+        elif active_tab == "tab-overview":
+            log = self.query_one("#overview-log", RichLog)
+            log.wrap = self._wrap
+            log.clear()
+            self._write_overview(log)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -339,32 +436,89 @@ class DetailScreen(ModalScreen[None]):
     def action_tab_events(self) -> None:
         self.query_one("#detail-tabs", TabbedContent).active = "tab-events"
 
-    def action_copy_row(self) -> None:
-        """Copy the selected DataTable row to the system clipboard (y key)."""
+    def action_toggle_selection(self) -> None:
+        """Toggle the current row in/out of the multi-select set (Space key)."""
         active_tab = self.query_one("#detail-tabs", TabbedContent).active
         table_id = _ROW_COPY_TABLES.get(active_tab)
         if not table_id:
             return
         table = self.query_one(table_id, DataTable)
-        if table.row_count == 0 or table.cursor_row is None:
+        row_key = self._cursor_keys.get(table_id)
+        if not row_key or table.row_count == 0:
             return
-        row = table.get_row_at(table.cursor_row)
-        text = "\t".join(
-            cell.plain if isinstance(cell, Text) else str(cell)
-            for cell in row
+
+        selected = self._selected_rows[table_id]
+        if row_key in selected:
+            selected.discard(row_key)
+            table.update_cell(row_key, _SEL_COL, "")
+        else:
+            selected.add(row_key)
+            table.update_cell(row_key, _SEL_COL, _SEL_MARKER)
+
+        count = len(selected)
+        self.notify(
+            f"{count} row{'s' if count != 1 else ''} selected" if count else "Row deselected",
+            timeout=1,
         )
-        self.app.copy_to_clipboard(text)
-        self.notify("Row copied to clipboard", timeout=2)
+
+    def action_copy_row(self) -> None:
+        """Copy selected rows (or the cursor row) to the system clipboard (y key)."""
+        active_tab = self.query_one("#detail-tabs", TabbedContent).active
+        table_id = _ROW_COPY_TABLES.get(active_tab)
+        if not table_id:
+            return
+        table = self.query_one(table_id, DataTable)
+        if table.row_count == 0:
+            return
+
+        selected = self._selected_rows[table_id]
+
+        if selected:
+            # Copy all selected rows in table order
+            lines: list[str] = []
+            for row_idx in range(table.row_count):
+                row = table.get_row_at(row_idx)
+                # Determine row key by checking selection marker in cell 0
+                cell0 = row[0]
+                cell0_str = cell0.plain if isinstance(cell0, Text) else str(cell0)
+                if cell0_str == _SEL_MARKER:
+                    lines.append(self._row_cells_to_text(row))
+            text = "\n".join(lines)
+            # Clear selection markers
+            for rk in selected:
+                try:
+                    table.update_cell(rk, _SEL_COL, "")
+                except Exception:
+                    pass
+            selected.clear()
+            self.app.copy_to_clipboard(text)
+            self.notify(f"{len(lines)} rows copied to clipboard", timeout=2)
+        else:
+            # Fallback: copy the cursor row
+            if table.cursor_row is None:
+                return
+            row = table.get_row_at(table.cursor_row)
+            text = self._row_cells_to_text(row)
+            self.app.copy_to_clipboard(text)
+            self.notify("Row copied to clipboard", timeout=2)
+
+    def action_toggle_wrap(self) -> None:
+        """Toggle text wrapping for the active tab's text widget (w key)."""
+        self._wrap = not self._wrap
+        self._apply_wrap_to_active_tab()
+        state = "on" if self._wrap else "off"
+        self.notify(f"Wrap {state}", timeout=1)
 
     def action_diff_values(self) -> None:
-        hist_table = self.query_one("#history-table", DataTable)
-        if hist_table.cursor_row is None or hist_table.row_count == 0:
+        row_key = self._cursor_keys.get("#history-table")
+        if not row_key:
             self.notify("Select a revision in the History tab first", severity="warning")
             return
-        row = hist_table.get_row_at(hist_table.cursor_row)
-        if row:
-            selected_rev = int(str(row[0]))
-            self._show_values_diff(selected_rev)
+        try:
+            selected_rev = int(row_key)
+        except ValueError:
+            return
+        self._show_values_diff(selected_rev)
 
     @work(thread=False)
     async def _show_values_diff(self, old_revision: int) -> None:
