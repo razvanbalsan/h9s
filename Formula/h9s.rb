@@ -2,7 +2,7 @@ class H9s < Formula
   desc "k9s-style terminal UI dashboard for Helm releases on Kubernetes"
   homepage "https://github.com/razvanbalsan/h9s"
   url "https://github.com/razvanbalsan/h9s/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "PLACEHOLDER_SHA256"  # updated automatically by bump-formula-pr or release workflow
+  sha256 "6d3f91ee147f35c70897eb4506382efe12268843e50600d130b4232236608c53"
   license "MIT"
   head "https://github.com/razvanbalsan/h9s.git", branch: "main"
 
