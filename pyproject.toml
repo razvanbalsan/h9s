@@ -1,6 +1,6 @@
 [project]
 name = "h9s"
-version = "1.0.0"
+version = "1.0.1"
 description = "H9S — a k9s-style terminal UI dashboard for Helm releases on Kubernetes"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -26,6 +26,9 @@ line-length = 100
 [tool.mypy]
 python_version = "3.11"
 strict = false
+
+[tool.setuptools.packages.find]
+include = ["helm_dashboard*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]
