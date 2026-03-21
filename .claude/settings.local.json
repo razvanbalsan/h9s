@@ -22,7 +22,9 @@
       "Bash(pytest tests/test_helm_client.py::test_diff_values_produces_unified_diff -v)",
       "Bash(pytest tests/test_helm_client.py::test_get_available_chart_versions_returns_list -v)",
       "Bash(pytest tests/ -q)",
-      "Bash(source /Users/razvanbalsan/Projects/h9s/.venv/bin/activate)"
+      "Bash(source /Users/razvanbalsan/Projects/h9s/.venv/bin/activate)",
+      "Bash(git -C /Users/razvanbalsan/Projects/h9s rm helm-dashboard)",
+      "Bash(git:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
