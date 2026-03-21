@@ -25,60 +25,69 @@ A **k9s-style** terminal dashboard for managing Helm releases on Kubernetes, bui
 - **Repository Management** — add, remove, and update Helm repos from a dedicated screen
 - **Keyboard-Driven** — full keyboard navigation inspired by k9s and htop
 
-## Prerequisites
+## Requirements
 
 | Tool | Required | Notes |
 |------|----------|-------|
-| Python 3.11+ | ✅ | `brew install python@3.12` |
-| Helm 3 | ✅ | `brew install helm` |
+| helm 3 | ✅ | `brew install helm` |
 | kubectl | Recommended | Needed for Resources, Logs, Events, and Describe tabs |
+| Python 3.11+ | Only for source installs | `brew install python@3.12` |
 
 ## Installation
 
-### Option 1 — One-command installer (recommended)
+### Homebrew (recommended)
 
 ```bash
-git clone <repo-url> h9s
-cd h9s
-chmod +x install.sh && ./install.sh
+brew tap razvanbalsan/h9s https://github.com/razvanbalsan/h9s
+brew install h9s
 ```
 
-The installer creates a virtual environment, installs all dependencies, and places a `h9s` launcher script in the project root.
+### curl one-liner
+
+Downloads the pre-built binary for your platform, falls back to pip if no binary is available:
 
 ```bash
-./h9s
+curl -fsSL https://raw.githubusercontent.com/razvanbalsan/h9s/main/install.sh | bash
 ```
 
-### Option 2 — pip install (editable)
+To install to a custom location (default is `/usr/local/bin`):
 
 ```bash
-git clone <repo-url> h9s
+H9S_INSTALL_DIR=~/.local/bin curl -fsSL \
+  https://raw.githubusercontent.com/razvanbalsan/h9s/main/install.sh | bash
+```
+
+### Direct binary download (macOS)
+
+Pick the binary that matches your Mac from the [latest release](https://github.com/razvanbalsan/h9s/releases/latest):
+
+**Apple Silicon (M1 / M2 / M3)**
+```bash
+curl -L https://github.com/razvanbalsan/h9s/releases/latest/download/h9s-macos-arm64 \
+  -o /usr/local/bin/h9s && chmod +x /usr/local/bin/h9s
+```
+
+**Intel Mac**
+```bash
+curl -L https://github.com/razvanbalsan/h9s/releases/latest/download/h9s-macos-x86_64 \
+  -o /usr/local/bin/h9s && chmod +x /usr/local/bin/h9s
+```
+
+### pipx
+
+```bash
+pipx install git+https://github.com/razvanbalsan/h9s.git
+```
+
+### From source
+
+```bash
+git clone https://github.com/razvanbalsan/h9s.git
 cd h9s
-python3 -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
-h9s                   # registered entry point
-# or: python -m helm_dashboard
-```
-
-### Option 3 — pip install (non-editable)
-
-```bash
-pip install .
 h9s
 ```
-
-### Dependencies
-
-All Python dependencies are declared in `pyproject.toml` and installed automatically:
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `textual` | ≥ 0.85 | TUI framework |
-| `rich` | ≥ 13.0 | Syntax highlighting, rich text |
-| `pyyaml` | ≥ 6.0 | YAML parsing for manifest/values diff |
-
-No Kubernetes SDK is required — the app communicates with Helm and kubectl entirely through their CLI binaries.
 
 ## Usage
 
@@ -136,9 +145,12 @@ On startup the dashboard loads all releases in the current context. Use `n` to o
 
 ```
 h9s/
-├── pyproject.toml              # Project metadata & dependencies
-├── install.sh                  # One-command installer
-├── README.md
+├── pyproject.toml              # Package metadata & dependencies
+├── h9s.spec                    # PyInstaller build spec
+├── install.sh                  # curl-installable installer
+├── Formula/h9s.rb              # Homebrew formula
+├── .github/workflows/
+│   └── release.yml             # CI: build binaries + create GitHub Release on tag push
 ├── tests/
 │   └── test_helm_client.py
 └── helm_dashboard/
@@ -158,7 +170,16 @@ h9s/
         └── repos.py            # Helm repo management
 ```
 
-The app communicates with Helm and kubectl entirely through their CLI binaries (JSON/YAML output mode), keeping it lightweight and dependency-free beyond Python + Textual. All subprocess calls are async, so the UI never blocks.
+The app communicates with Helm and kubectl entirely through their CLI binaries (JSON/YAML output mode). All subprocess calls are async — the UI never blocks.
+
+## Release process
+
+Releases are fully automated via GitHub Actions:
+
+1. Tag a commit: `git tag v1.x.x && git push origin v1.x.x`
+2. The workflow builds native binaries for macOS arm64 and x86_64 using PyInstaller
+3. A GitHub Release is created with the binaries and SHA256 checksums attached
+4. Update `Formula/h9s.rb` with the new tarball URL and SHA256 to publish via Homebrew
 
 ## License
 

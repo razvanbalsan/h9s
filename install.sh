@@ -1,110 +1,173 @@
 #!/usr/bin/env bash
-# ─── H9S Installer ───────────────────────────────────────────────────
-# Installs the h9s TUI tool on macOS / Linux.
+# ─── H9S Installer ────────────────────────────────────────────────────────────
 #
-# Usage:
+# Installs H9S — a k9s-style terminal UI for Helm releases.
+#
+# Usage (one-liner):
+#   curl -fsSL https://raw.githubusercontent.com/razvanbalsan/h9s/main/install.sh | bash
+#
+# Or locally:
 #   chmod +x install.sh && ./install.sh
-# ─────────────────────────────────────────────────────────────────────
+#
+# The script tries to install a pre-built binary first (fast, no Python required).
+# Falls back to pip install into a venv if no binary is available for this platform.
+# ──────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
+
+REPO="razvanbalsan/h9s"
+INSTALL_DIR="${H9S_INSTALL_DIR:-/usr/local/bin}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 info()  { printf "${CYAN}[INFO]${NC}  %s\n" "$*"; }
-ok()    { printf "${GREEN}[OK]${NC}    %s\n" "$*"; }
+ok()    { printf "${GREEN}[ OK ]${NC}  %s\n" "$*"; }
 warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
-fail()  { printf "${RED}[FAIL]${NC}  %s\n" "$*"; exit 1; }
+fail()  { printf "${RED}[FAIL]${NC}  %s\n" "$*" >&2; exit 1; }
 
-# ── Pre-flight checks ───────────────────────────────────────────────
+# ── Detect platform ────────────────────────────────────────────────────────────
 
-info "Checking prerequisites..."
+OS="$(uname -s)"
+ARCH="$(uname -m)"
 
-# Python 3.11+
-if command -v python3 &>/dev/null; then
-    PY=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-    MAJOR=$(echo "$PY" | cut -d. -f1)
-    MINOR=$(echo "$PY" | cut -d. -f2)
-    if (( MAJOR < 3 || (MAJOR == 3 && MINOR < 11) )); then
-        fail "Python 3.11+ required (found $PY). Install via: brew install python@3.12"
-    fi
-    ok "Python $PY found"
-else
-    fail "Python 3 not found. Install via: brew install python@3.12"
-fi
+case "${OS}" in
+  Darwin)
+    case "${ARCH}" in
+      arm64)  ARTIFACT="h9s-macos-arm64" ;;
+      x86_64) ARTIFACT="h9s-macos-x86_64" ;;
+      *)      ARTIFACT="" ;;
+    esac
+    ;;
+  *)
+    ARTIFACT=""
+    ;;
+esac
 
-# helm
-if command -v helm &>/dev/null; then
-    ok "Helm $(helm version --short 2>/dev/null || echo 'found')"
-else
-    warn "Helm not found. Install via: brew install helm"
-    warn "The dashboard will start but won't be able to fetch data."
-fi
+# ── Fetch latest release tag ───────────────────────────────────────────────────
 
-# kubectl
-if command -v kubectl &>/dev/null; then
+get_latest_tag() {
+  if command -v curl &>/dev/null; then
+    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/'
+  elif command -v wget &>/dev/null; then
+    wget -qO- "https://api.github.com/repos/${REPO}/releases/latest" \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\(.*\)".*/\1/'
+  else
+    echo ""
+  fi
+}
+
+# ── Install pre-built binary ───────────────────────────────────────────────────
+
+install_binary() {
+  local tag="$1"
+  local url="https://github.com/${REPO}/releases/download/${tag}/${ARTIFACT}"
+
+  info "Downloading ${ARTIFACT} (${tag})..."
+  tmp="$(mktemp)"
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$url" -o "$tmp"
+  else
+    wget -qO "$tmp" "$url"
+  fi
+
+  # Write to install dir (may need sudo)
+  TARGET="${INSTALL_DIR}/h9s"
+  if [ -w "$INSTALL_DIR" ]; then
+    mv "$tmp" "$TARGET"
+  else
+    info "Writing to ${INSTALL_DIR} requires sudo..."
+    sudo mv "$tmp" "$TARGET"
+  fi
+  chmod +x "$TARGET"
+  ok "Installed binary to ${TARGET}"
+}
+
+# ── Fallback: pip into venv ────────────────────────────────────────────────────
+
+install_from_source() {
+  info "Installing from source via pip..."
+
+  # Require Python 3.11+
+  if ! command -v python3 &>/dev/null; then
+    fail "Python 3.11+ is required. Install via: brew install python@3.12"
+  fi
+
+  PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')
+  if [ "$PY_VER" -lt 311 ] 2>/dev/null; then
+    fail "Python 3.11+ required (found $(python3 --version)). Install via: brew install python@3.12"
+  fi
+
+  VENV_DIR="${HOME}/.h9s/venv"
+  mkdir -p "$(dirname "$VENV_DIR")"
+  python3 -m venv "$VENV_DIR"
+  "${VENV_DIR}/bin/pip" install --upgrade pip -q
+  "${VENV_DIR}/bin/pip" install "git+https://github.com/${REPO}.git" -q
+  ok "Installed into ${VENV_DIR}"
+
+  # Write launcher
+  TARGET="${INSTALL_DIR}/h9s"
+  LAUNCHER="#!/usr/bin/env bash
+exec \"${VENV_DIR}/bin/python\" -m helm_dashboard \"\$@\""
+
+  if [ -w "$INSTALL_DIR" ]; then
+    printf '%s\n' "$LAUNCHER" > "$TARGET"
+  else
+    info "Writing to ${INSTALL_DIR} requires sudo..."
+    echo "$LAUNCHER" | sudo tee "$TARGET" > /dev/null
+  fi
+  chmod +x "$TARGET"
+  ok "Launcher written to ${TARGET}"
+}
+
+# ── Check prerequisites (non-fatal warnings) ───────────────────────────────────
+
+check_prereqs() {
+  if command -v helm &>/dev/null; then
+    ok "helm $(helm version --short 2>/dev/null | head -1)"
+  else
+    warn "helm not found — install via: brew install helm"
+  fi
+
+  if command -v kubectl &>/dev/null; then
     ok "kubectl found"
+  else
+    warn "kubectl not found — some tabs (Resources, Events) will be unavailable"
+  fi
+}
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
+echo ""
+printf "${CYAN}⎈ H9S Installer${NC}\n"
+echo "──────────────────────────────────────────"
+echo ""
+
+check_prereqs
+echo ""
+
+TAG="$(get_latest_tag)"
+
+if [ -n "$ARTIFACT" ] && [ -n "$TAG" ]; then
+  install_binary "$TAG"
 else
-    warn "kubectl not found. Some features (resources view) may not work."
+  if [ -z "$ARTIFACT" ]; then
+    warn "No pre-built binary for ${OS}/${ARCH} — falling back to pip install"
+  else
+    warn "Could not determine latest release tag — falling back to pip install"
+  fi
+  install_from_source
 fi
 
-# ── Create virtual environment ───────────────────────────────────────
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV_DIR="${SCRIPT_DIR}/.venv"
-
-if [ -d "$VENV_DIR" ] && [ ! -f "${VENV_DIR}/bin/activate" ]; then
-    warn "Existing virtual environment is broken (missing activate script). Recreating..."
-    python3 -m venv --clear "$VENV_DIR"
-    ok "Virtual environment recreated at ${VENV_DIR}"
-elif [ ! -d "$VENV_DIR" ]; then
-    info "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    ok "Virtual environment created at ${VENV_DIR}"
-else
-    ok "Virtual environment already exists"
-fi
-
-source "${VENV_DIR}/bin/activate"
-
-# ── Install dependencies ─────────────────────────────────────────────
-
-info "Installing dependencies..."
-pip install --upgrade pip setuptools -q
-pip install -e "${SCRIPT_DIR}" -q
-ok "Dependencies installed"
-
-# ── Create launcher script ───────────────────────────────────────────
-
-LAUNCHER="${SCRIPT_DIR}/h9s"
-
-cat > "$LAUNCHER" << 'SCRIPT'
-#!/usr/bin/env bash
-# Launcher for H9S
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "${SCRIPT_DIR}/.venv/bin/activate"
-python -m helm_dashboard "$@"
-SCRIPT
-
-chmod +x "$LAUNCHER"
-ok "Launcher created: ${LAUNCHER}"
-
-# ── Optional: symlink to PATH ────────────────────────────────────────
-
 echo ""
-info "Installation complete!"
+printf "${GREEN}✓ H9S installed successfully!${NC}\n"
 echo ""
-printf "  ${GREEN}To run:${NC}\n"
-printf "    cd %s && ./h9s\n" "$SCRIPT_DIR"
+printf "  Run:  ${YELLOW}h9s${NC}\n"
 echo ""
-printf "  ${GREEN}Or add to PATH:${NC}\n"
-printf "    ln -sf %s/h9s /usr/local/bin/h9s\n" "$SCRIPT_DIR"
-echo ""
-printf "  ${GREEN}Then just run:${NC}\n"
-printf "    h9s\n"
-echo ""
-printf "  ${CYAN}Keyboard shortcuts:${NC} Press ${YELLOW}?${NC} inside the app for help.\n"
+printf "  Make sure ${INSTALL_DIR} is in your PATH.\n"
+printf "  Press ${YELLOW}?${NC} inside the app for keyboard shortcuts.\n"
 echo ""

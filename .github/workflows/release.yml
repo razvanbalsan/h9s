@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-14        # Apple Silicon (arm64)
+            artifact: h9s-macos-arm64
+          - os: macos-13        # Intel (x86_64)
+            artifact: h9s-macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      - name: Build binary
+        run: pyinstaller h9s.spec --clean
+
+      - name: Rename artifact
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+        run: mv dist/h9s "dist/${ARTIFACT}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Compute SHA256 checksums
+        run: |
+          cd dist
+          for dir in */; do
+            f="${dir%/}"
+            sha256sum "$f/$f" >> ../checksums.txt
+          done
+          cat ../checksums.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "${TAG}" \
+            --title "H9S ${TAG}" \
+            --notes-file .github/release-notes-template.md \
+            dist/h9s-macos-arm64/h9s-macos-arm64 \
+            dist/h9s-macos-x86_64/h9s-macos-x86_64 \
+            checksums.txt
