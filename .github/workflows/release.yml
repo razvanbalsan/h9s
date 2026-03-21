@@ -12,13 +12,17 @@ jobs:
   build:
     name: Build binary (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.optional }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-14        # Apple Silicon (arm64)
             artifact: h9s-macos-arm64
+            optional: false
           - os: macos-13        # Intel (x86_64)
             artifact: h9s-macos-x86_64
+            optional: true
 
     steps:
       - uses: actions/checkout@v4
@@ -60,24 +64,38 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist/
+          merge-multiple: false
+
+      - name: List artifacts
+        run: find dist/ -type f | sort
 
       - name: Compute SHA256 checksums
         run: |
           cd dist
           for dir in */; do
             f="${dir%/}"
-            sha256sum "$f/$f" >> ../checksums.txt
+            if [ -f "$f/$f" ]; then
+              sha256sum "$f/$f" >> ../checksums.txt
+            fi
           done
-          cat ../checksums.txt
+          cat ../checksums.txt || echo "No checksums generated"
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
+          ASSETS=""
+          for dir in dist/*/; do
+            f="${dir%/}"
+            name=$(basename "$f")
+            if [ -f "$f/$name" ]; then
+              ASSETS="$ASSETS $f/$name"
+            fi
+          done
+          [ -f checksums.txt ] && ASSETS="$ASSETS checksums.txt"
+
           gh release create "${TAG}" \
             --title "H9S ${TAG}" \
             --notes-file .github/release-notes-template.md \
-            dist/h9s-macos-arm64/h9s-macos-arm64 \
-            dist/h9s-macos-x86_64/h9s-macos-x86_64 \
-            checksums.txt
+            $ASSETS
