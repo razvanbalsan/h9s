@@ -7,7 +7,7 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
+import time
 
 from rich.text import Text
 from textual import on, work
@@ -257,10 +257,16 @@ class HelmDashboard(App):
     _cpu_pct: reactive[str] = reactive("…")
     _mem_pct: reactive[str] = reactive("…")
 
+    _UPGRADE_CHECK_INTERVAL = 600.0  # seconds between upgrade scans (10 min)
+    _RESOURCE_POLL_INTERVAL = 30.0   # seconds between kubectl top nodes calls
+
     def __init__(self) -> None:
         super().__init__()
-        self._namespaces: list[str] = []  # real namespaces only (no "All Namespaces" pseudo-entry)
-        self._upgrade_available: dict[str, bool] = {}  # release_name -> True if newer version available
+        self._namespaces: list[str] = []
+        self._upgrade_available: dict[str, bool] = {}
+        self._last_upgrade_check: float = 0.0
+        self._refresh_timer: object | None = None
+        self._resource_timer: object | None = None
 
     def compose(self) -> ComposeResult:
         yield InfoHeader(id="info-header")
@@ -303,10 +309,11 @@ class HelmDashboard(App):
         # Push initial namespace list to header
         self._push_namespaces_to_header()
 
-        # Kick off background info loaders
+        # Kick off background info loaders (one-shot)
         self._load_cluster_info()
         self._load_k8s_version()
-        self._start_resource_polling()
+        self._poll_node_resources()  # immediate first poll
+        self._start_resource_polling()  # then on a timer
 
         self.load_releases()
         self._start_auto_refresh()
@@ -413,14 +420,19 @@ class HelmDashboard(App):
     async def _load_k8s_version(self) -> None:
         self._k8s_version = await get_k8s_server_version()
 
-    @work(thread=False, exclusive=True)
-    async def _start_resource_polling(self) -> None:
-        """Poll node CPU/MEM every 10 seconds indefinitely."""
-        while True:
-            cpu, mem = await get_node_resources()
-            self._cpu_pct = cpu
-            self._mem_pct = mem
-            await asyncio.sleep(10)
+    def _start_resource_polling(self) -> None:
+        """Poll node CPU/MEM on a timer. Replaces the old always-on worker."""
+        if self._resource_timer is not None:
+            self._resource_timer.stop()  # type: ignore[union-attr]
+        self._resource_timer = self.set_interval(
+            self._RESOURCE_POLL_INTERVAL, self._poll_node_resources
+        )
+
+    @work(thread=False)
+    async def _poll_node_resources(self) -> None:
+        cpu, mem = await get_node_resources()
+        self._cpu_pct = cpu
+        self._mem_pct = mem
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -459,17 +471,19 @@ class HelmDashboard(App):
         label = self._REFRESH_LABELS[next_idx]
         if self.auto_refresh_interval > 0:
             self.notify(f"Auto-refresh: every {label}", timeout=2)
-            self._start_auto_refresh()
         else:
             self.notify("Auto-refresh: off", timeout=2)
+        self._start_auto_refresh()
 
-    @work(thread=False, exclusive=True)
-    async def _start_auto_refresh(self) -> None:
-        """Runs until auto_refresh_interval becomes 0."""
-        while self.auto_refresh_interval > 0:
-            await asyncio.sleep(self.auto_refresh_interval)
-            if self.auto_refresh_interval > 0:  # check again after sleep
-                self.load_releases()
+    def _start_auto_refresh(self) -> None:
+        """(Re)start the auto-refresh timer at the current interval. Stops it when interval is 0."""
+        if self._refresh_timer is not None:
+            self._refresh_timer.stop()  # type: ignore[union-attr]
+            self._refresh_timer = None
+        if self.auto_refresh_interval > 0:
+            self._refresh_timer = self.set_interval(
+                self.auto_refresh_interval, self.load_releases
+            )
 
     def action_show_help(self) -> None:
         self.push_screen(HelpScreen())
@@ -720,7 +734,15 @@ class HelmDashboard(App):
 
     @work(thread=False)
     async def _check_upgrades_available(self) -> None:
-        """Background check for newer chart versions (best-effort, does not block UI)."""
+        """Background check for newer chart versions (best-effort, does not block UI).
+
+        Runs at most once per _UPGRADE_CHECK_INTERVAL to avoid hammering the repo index.
+        """
+        now = time.monotonic()
+        if now - self._last_upgrade_check < self._UPGRADE_CHECK_INTERVAL:
+            return
+        self._last_upgrade_check = now
+
         from helm_dashboard.helm_client import get_available_chart_versions
         # Reset stale entries — a release may have been uninstalled/reinstalled.
         self._upgrade_available = {}
