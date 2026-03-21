@@ -1,6 +1,6 @@
 [project]
 name = "h9s"
-version = "1.0.2"
+version = "1.0.3"
 description = "H9S — a k9s-style terminal UI dashboard for Helm releases on Kubernetes"
 requires-python = ">=3.11"
 license = { text = "MIT" }
